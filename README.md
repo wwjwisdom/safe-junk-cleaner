@@ -1,5 +1,15 @@
 # Safe Junk Cleaner
 
+> This repository has moved. Active development now lives in [`wwjwisdom/safe-junk-cleaner-skill`](https://github.com/wwjwisdom/safe-junk-cleaner-skill).
+>
+> Please update your clone URL or Git remote:
+>
+> ```bash
+> git remote set-url origin https://github.com/wwjwisdom/safe-junk-cleaner-skill.git
+> ```
+>
+> For the latest README, installation steps, and ongoing updates, use the new repository.
+
 Safe Junk Cleaner is a cross-platform, whitelist-based cleanup skill and CLI for Windows, macOS, and Linux.
 
 It helps AI agents and power users reclaim disk space from rebuildable junk without touching documents, projects, chat history, media libraries, browser credentials, or unknown large folders.
@@ -268,7 +278,7 @@ See [INSTALL.md](INSTALL.md) for step-by-step installation instructions.
 ## Repository Layout
 
 ```text
-safe-junk-cleaner/
+safe-junk-cleaner-skill/
 |- SKILL.md
 |- README.md
 |- INSTALL.md
