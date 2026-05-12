@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
+import heapq
 import json
 import os
 import platform
@@ -107,6 +109,9 @@ PROFILE_TEMP_AGES = {
     "aggressive": 6,
 }
 
+CLEANUP_LEVEL_CHOICES = (1, 2)
+LEVEL_TWO_STALE_HOURS = 24 * 365 * 2
+
 CATEGORY_TITLES = {
     "temp": "Temporary Files",
     "browser-cache": "Browser Caches",
@@ -119,6 +124,115 @@ CATEGORY_TITLES = {
     "package-cache": "Package and Developer Caches",
 }
 
+SPECIALTY_CHOICES = (
+    "common",
+    "system-drive",
+    "wechat",
+    "qq",
+    "residual",
+    "developer",
+)
+
+SPECIALTY_TITLES = {
+    "common": "Common Junk Cleanup",
+    "system-drive": "System Drive Cleanup",
+    "wechat": "WeChat Cleanup",
+    "qq": "QQ Cleanup",
+    "residual": "Software Leftovers Cleanup",
+    "developer": "Developer Cache Cleanup",
+}
+
+COMMON_SPECIALTY_CATEGORIES = {
+    "temp",
+    "browser-cache",
+    "app-cache",
+    "shader-cache",
+    "crash",
+    "thumbnails",
+    "logs",
+    "trash",
+}
+
+QQ_PATH_KEYWORDS = (
+    "\\qq\\",
+    "\\qqex\\",
+    "\\qqbrowser\\",
+    "\\qqguild\\",
+    "\\qqminiapp\\",
+    "\\qq-play\\",
+    "\\qqmusic\\",
+    "\\qq-chat-updater",
+    "\\qqminiapp-updater",
+    "\\qqplay-updater",
+    "\\qq_guild-updater",
+    "\\tencent files\\",
+)
+
+WECHAT_PATH_KEYWORDS = (
+    "\\wechat\\",
+    "\\weixin\\",
+    "\\xwechat\\",
+    "\\wxwork\\",
+)
+
+RESIDUAL_PATH_KEYWORDS = (
+    "squirreltemp",
+    "-updater",
+    "_updater",
+    "\\upgrade",
+    "updatepackages",
+    "\\updates\\",
+)
+
+WINDOWS_CONTENT_SCAN_SKIP_DIRS = {
+    "$recycle.bin",
+    "appdata",
+    "msocache",
+    "onedrivetemp",
+    "perflogs",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "recovery",
+    "system volume information",
+    "windows",
+}
+
+DUPLICATE_SCAN_EXTENSIONS = {
+    ".7z",
+    ".avi",
+    ".doc",
+    ".docx",
+    ".epub",
+    ".flac",
+    ".gz",
+    ".heic",
+    ".iso",
+    ".jpeg",
+    ".jpg",
+    ".m4a",
+    ".mkv",
+    ".mov",
+    ".mp3",
+    ".mp4",
+    ".pdf",
+    ".png",
+    ".ppt",
+    ".pptx",
+    ".psd",
+    ".rar",
+    ".svg",
+    ".tar",
+    ".tif",
+    ".tiff",
+    ".txt",
+    ".wav",
+    ".webm",
+    ".xls",
+    ".xlsx",
+    ".zip",
+}
+
 CHROMIUM_PROFILE_CACHE_SUBDIRS = (
     "Cache",
     "Code Cache",
@@ -129,6 +243,12 @@ CHROMIUM_PROFILE_CACHE_SUBDIRS = (
     "DawnGraphiteCache",
     "DawnWebGPUCache",
     "GraphiteDawnCache",
+    "Media Cache",
+)
+
+CHROMIUM_PROFILE_WEB_CACHE_SUBDIRS = (
+    Path("Service Worker") / "CacheStorage",
+    Path("Service Worker") / "ScriptCache",
 )
 
 CHROMIUM_ROOT_CACHE_SUBDIRS = (
@@ -150,6 +270,28 @@ ELECTRON_CACHE_SUBDIRS = (
     "DawnGraphiteCache",
     "DawnWebGPUCache",
     "GraphiteDawnCache",
+    "Media Cache",
+)
+
+ELECTRON_WEB_CACHE_SUBDIRS = (
+    Path("Service Worker") / "CacheStorage",
+    Path("Service Worker") / "ScriptCache",
+)
+
+UWP_LOCAL_CACHE_SUBDIRS = (
+    "Cache",
+    "Caches",
+    "Code Cache",
+    "GPUCache",
+    "INetCache",
+    "Temp",
+    "DawnGraphiteCache",
+    "DawnWebGPUCache",
+    "GraphiteDawnCache",
+    "GrShaderCache",
+    "ShaderCache",
+    Path("Service Worker") / "CacheStorage",
+    Path("Service Worker") / "ScriptCache",
 )
 
 WINDOWS_ELECTRON_APP_NAMES = (
@@ -419,6 +561,8 @@ class Target:
     category: str
     min_age_hours: int = 0
     patterns: tuple[str, ...] = ()
+    age_mode: str = "mtime"
+    min_level: int = 1
 
 
 def detect_os():
@@ -458,11 +602,16 @@ def is_symlink_like(path):
         return True
 
 
-def is_old_enough(path, min_age_hours):
+def is_old_enough(path, min_age_hours, age_mode="mtime"):
     if min_age_hours <= 0:
         return True
     try:
-        age_seconds = now_ts() - os.lstat(path).st_mtime
+        stat_result = os.lstat(path)
+        if age_mode == "activity":
+            marker = max(stat_result.st_atime, stat_result.st_mtime)
+        else:
+            marker = stat_result.st_mtime
+        age_seconds = now_ts() - marker
         return age_seconds >= min_age_hours * 3600
     except OSError:
         return False
@@ -686,6 +835,85 @@ def clean_temp_dir(root, min_age_hours, errors):
     return total_size, total_items, skipped
 
 
+def summarize_stale_dir(root, min_age_hours, errors, age_mode):
+    if not root.exists() or not root.is_dir():
+        return 0, 0
+    total_size = 0
+    total_items = 0
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    entry_path = Path(entry.path)
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry_path)
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        if not is_old_enough(entry_path, min_age_hours, age_mode):
+                            continue
+                        total_size += entry.stat(follow_symlinks=False).st_size
+                        total_items += 1
+                    except OSError as exc:
+                        append_error(errors, f"scan failed for {entry.path}: {exc}")
+        except OSError as exc:
+            append_error(errors, f"scan failed for {current}: {exc}")
+    return total_size, total_items
+
+
+def clean_stale_dir(root, min_age_hours, errors, age_mode):
+    if not root.exists() or not root.is_dir():
+        return 0, 0, 0
+    total_size = 0
+    total_items = 0
+    skipped = 0
+    stack = [root]
+    seen_dirs = []
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    entry_path = Path(entry.path)
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry_path)
+                            seen_dirs.append(entry_path)
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        if not is_old_enough(entry_path, min_age_hours, age_mode):
+                            continue
+                        size, items, failures = remove_file(entry_path, errors)
+                        total_size += size
+                        total_items += items
+                        skipped += failures
+                    except OSError as exc:
+                        append_error(errors, f"delete failed for {entry.path}: {exc}")
+                        skipped += 1
+        except OSError as exc:
+            append_error(errors, f"scan failed for {current}: {exc}")
+            skipped += 1
+
+    for directory in sorted(seen_dirs, key=lambda item: len(item.parts), reverse=True):
+        if not directory.exists():
+            continue
+        if not is_old_enough(directory, min_age_hours, age_mode):
+            continue
+        try:
+            directory.rmdir()
+        except OSError:
+            continue
+    return total_size, total_items, skipped
+
+
 def summarize_match_files(root, patterns, min_age_hours, errors):
     if not root.exists() or not root.is_dir():
         return 0, 0
@@ -748,10 +976,10 @@ def normalize_key(target):
     path_text = str(target.path)
     if detect_os() == "windows":
         path_text = path_text.lower()
-    return (target.kind, target.category, path_text, target.min_age_hours, target.patterns)
+    return (target.kind, target.category, path_text, target.min_age_hours, target.patterns, target.age_mode, target.min_level)
 
 
-def add_target(targets, seen, label, path, kind, category, min_age_hours=0, patterns=()):
+def add_target(targets, seen, label, path, kind, category, min_age_hours=0, patterns=(), age_mode="mtime", min_level=1):
     target = Target(
         label=label,
         path=Path(path),
@@ -759,12 +987,58 @@ def add_target(targets, seen, label, path, kind, category, min_age_hours=0, patt
         category=category,
         min_age_hours=min_age_hours,
         patterns=tuple(patterns),
+        age_mode=age_mode,
+        min_level=min_level,
     )
     key = normalize_key(target)
     if key in seen:
         return
     seen.add(key)
     targets.append(target)
+
+
+def normalize_path_text(path):
+    return str(path).replace("/", "\\").lower()
+
+
+def specialty_matches(category, label, path_text, specialty, system_drive):
+    if specialty == "common":
+        return category in COMMON_SPECIALTY_CATEGORIES
+    if specialty == "developer":
+        return category == "package-cache"
+    if specialty == "system-drive":
+        return path_text.startswith(system_drive)
+    if specialty == "wechat":
+        return any(keyword in path_text for keyword in WECHAT_PATH_KEYWORDS)
+    if specialty == "qq":
+        return any(keyword in path_text for keyword in QQ_PATH_KEYWORDS)
+    if specialty == "residual":
+        label_text = label.lower()
+        return any(keyword in path_text or keyword in label_text for keyword in RESIDUAL_PATH_KEYWORDS)
+    return False
+
+
+def target_matches_specialties(target, specialties, system_drive):
+    if not specialties:
+        return True
+    path_text = normalize_path_text(target.path)
+    return any(specialty_matches(target.category, target.label, path_text, specialty, system_drive) for specialty in specialties)
+
+
+def entry_matches_specialty(entry, specialty, system_drive):
+    path_text = normalize_path_text(entry["path"])
+    return specialty_matches(entry["category"], entry["label"], path_text, specialty, system_drive)
+
+
+def filter_targets_by_specialties(targets, specialties):
+    if not specialties:
+        return targets
+    system_drive = normalize_path_text(os.environ.get("SystemDrive", "C:\\")) + "\\"
+    return [target for target in targets if target_matches_specialties(target, specialties, system_drive)]
+
+
+def filter_targets_by_level(targets, level):
+    return [target for target in targets if target.min_level <= level]
 
 
 def iter_windows_volumes():
@@ -873,15 +1147,18 @@ def expand_existing_dirs(pattern):
         return []
 
 
-def add_subdir_targets(targets, seen, label_prefix, root, subdirs, category):
+def add_subdir_targets(targets, seen, label_prefix, root, subdirs, category, kind="purge_dir", min_age_hours=0, age_mode="mtime", min_level=1):
     for subdir in subdirs:
         add_target(
             targets,
             seen,
             f"{label_prefix} {str(subdir).replace('/', ' ')}",
             root / Path(subdir),
-            "purge_dir",
+            kind,
             category,
+            min_age_hours=min_age_hours,
+            age_mode=age_mode,
+            min_level=min_level,
         )
 
 
@@ -904,6 +1181,14 @@ def add_chromium_user_data_targets(targets, seen, label_prefix, user_data_root):
             CHROMIUM_PROFILE_CACHE_SUBDIRS,
             "browser-cache",
         )
+        add_subdir_targets(
+            targets,
+            seen,
+            f"{label_prefix} {profile_dir.name}",
+            profile_dir,
+            CHROMIUM_PROFILE_WEB_CACHE_SUBDIRS,
+            "browser-cache",
+        )
 
     partitions_root = user_data_root / "Partitions"
     if partitions_root.exists():
@@ -916,10 +1201,19 @@ def add_chromium_user_data_targets(targets, seen, label_prefix, user_data_root):
                 CHROMIUM_PROFILE_CACHE_SUBDIRS,
                 "browser-cache",
             )
+            add_subdir_targets(
+                targets,
+                seen,
+                f"{label_prefix} {partition_dir.name}",
+                partition_dir,
+                CHROMIUM_PROFILE_WEB_CACHE_SUBDIRS,
+                "browser-cache",
+            )
 
 
 def add_electron_app_targets(targets, seen, label_prefix, app_root):
     add_subdir_targets(targets, seen, label_prefix, app_root, ELECTRON_CACHE_SUBDIRS, "app-cache")
+    add_subdir_targets(targets, seen, label_prefix, app_root, ELECTRON_WEB_CACHE_SUBDIRS, "app-cache")
     add_target(
         targets,
         seen,
@@ -945,6 +1239,117 @@ def add_electron_app_targets(targets, seen, label_prefix, app_root):
 def add_windows_electron_catalog_targets(targets, seen, home_name, roaming):
     for app_name in WINDOWS_ELECTRON_APP_NAMES:
         add_electron_app_targets(targets, seen, f"{home_name} {app_name}", roaming / app_name)
+
+
+def add_windows_tencent_targets(targets, seen, home):
+    local = home / "AppData" / "Local"
+    roaming = home / "AppData" / "Roaming"
+    home_name = home.name
+    tencent_roaming = roaming / "Tencent"
+    tencent_files = home / "Documents" / "Tencent Files"
+
+    xwechat_root = tencent_roaming / "xwechat"
+    add_target(targets, seen, f"{home_name} xwechat crashinfo", xwechat_root / "crashinfo", "purge_dir", "crash")
+    add_target(targets, seen, f"{home_name} xwechat logs", xwechat_root / "log", "purge_dir", "logs")
+    add_target(targets, seen, f"{home_name} xwechat update", xwechat_root / "update", "purge_dir", "app-cache")
+    add_target(targets, seen, f"{home_name} xwechat cdn cache", xwechat_root / "ilink" / "netbridge" / "cdn", "purge_dir", "app-cache")
+    add_target(targets, seen, f"{home_name} xwechat net cache", xwechat_root / "net" / "cdncomm" / "cdn", "purge_dir", "app-cache")
+    add_target(targets, seen, f"{home_name} xwechat radium cache", xwechat_root / "radium" / "cache", "purge_dir", "app-cache", min_level=2)
+    add_target(targets, seen, f"{home_name} xwechat web filter cache", xwechat_root / "radium" / "web" / "Subresource Filter", "purge_dir", "app-cache", min_level=2)
+
+    for web_profile in expand_existing_dirs(xwechat_root / "radium" / "web" / "profiles" / "*"):
+        add_subdir_targets(
+            targets,
+            seen,
+            f"{home_name} xwechat {web_profile.name}",
+            web_profile,
+            CHROMIUM_PROFILE_CACHE_SUBDIRS,
+            "app-cache",
+            min_level=2,
+        )
+        add_subdir_targets(
+            targets,
+            seen,
+            f"{home_name} xwechat {web_profile.name}",
+            web_profile,
+            CHROMIUM_PROFILE_WEB_CACHE_SUBDIRS,
+            "app-cache",
+            min_level=2,
+        )
+
+    wechat_cdn_roots = [xwechat_root / "ilink" / "netbridge" / "cdn" / "cdn", xwechat_root / "net" / "cdncomm" / "cdn"]
+    wechat_cdn_roots.extend(net_root / "cdncomm" / "cdn" for net_root in expand_existing_dirs(xwechat_root / "net_*"))
+    for cdn_root in wechat_cdn_roots:
+        add_subdir_targets(
+            targets,
+            seen,
+            f"{home_name} xwechat stale media",
+            cdn_root,
+            ("download", "upload", Path("download") / "4hours"),
+            "app-cache",
+            kind="stale_dir",
+            min_age_hours=LEVEL_TWO_STALE_HOURS,
+            age_mode="activity",
+            min_level=2,
+        )
+
+    wemeet_global = tencent_roaming / "WeMeet" / "Global"
+    add_target(targets, seen, f"{home_name} WeMeet logs", wemeet_global / "Logs", "purge_dir", "logs")
+    add_target(targets, seen, f"{home_name} WeMeet update packages", wemeet_global / "UpdatePackages", "purge_dir", "app-cache")
+    add_target(targets, seen, f"{home_name} WeMeet upgrade", wemeet_global / "Upgrade", "purge_dir", "app-cache")
+    for data_subdir in (
+        "CustomLayoutPreview",
+        "DynamicResource",
+        "DynamicResourcePackage",
+        "StartUp",
+        "Timeline",
+        "Upgrade",
+        "VirtualBkg",
+        "WebkitCacheData",
+        "XCast",
+    ):
+        add_target(
+            targets,
+            seen,
+            f"{home_name} WeMeet {data_subdir}",
+            wemeet_global / "Data" / data_subdir,
+            "purge_dir",
+            "app-cache",
+        )
+
+    add_target(targets, seen, f"{home_name} Wemeet local logs", local / "Tencent" / "Wemeet" / "Logs", "purge_dir", "logs")
+
+    for log_cache in expand_existing_dirs(tencent_files / "*" / "nt_qq" / "nt_data" / "log-cache"):
+        add_target(targets, seen, f"{home_name} QQ nt log-cache", log_cache, "purge_dir", "logs")
+    for avatar_temp in expand_existing_dirs(tencent_files / "*" / "nt_qq" / "nt_data" / "avatar" / "user" / "temp"):
+        add_target(targets, seen, f"{home_name} QQ avatar temp", avatar_temp, "purge_dir", "app-cache")
+    for avatar_root in expand_existing_dirs(tencent_files / "*" / "nt_qq" / "nt_data" / "avatar" / "user"):
+        add_target(
+            targets,
+            seen,
+            f"{home_name} QQ stale avatar cache",
+            avatar_root,
+            "stale_dir",
+            "app-cache",
+            min_age_hours=LEVEL_TWO_STALE_HOURS,
+            age_mode="activity",
+            min_level=2,
+        )
+    for thumb_root in expand_existing_dirs(tencent_files / "*" / "nt_qq" / "nt_data" / "dataline" / ".thumb"):
+        add_target(
+            targets,
+            seen,
+            f"{home_name} QQ stale thumbnails",
+            thumb_root,
+            "stale_dir",
+            "app-cache",
+            min_age_hours=LEVEL_TWO_STALE_HOURS,
+            age_mode="activity",
+            min_level=2,
+        )
+
+    for updater_dir in expand_existing_dirs(local / "*updater"):
+        add_target(targets, seen, f"{home_name} {updater_dir.name}", updater_dir, "purge_dir", "app-cache")
 
 
 def add_macos_electron_catalog_targets(targets, seen, home_name, app_support):
@@ -1008,6 +1413,8 @@ def build_windows_targets(scope, profile, include_trash, include_package_caches)
             "Opera": roaming / "Opera Software" / "Opera Stable",
             "Opera GX": roaming / "Opera Software" / "Opera GX Stable",
             "Quark": local / "Quark" / "User Data",
+            "QQBrowser": local / "Tencent" / "QQBrowser" / "User Data",
+            "MiniBrowser": local / "Tencent" / "MiniBrowser" / "User Data",
             "RoxyBrowser": roaming / "RoxyBrowser" / "User Data",
         }
         for browser_name, user_data_root in chromium_roots.items():
@@ -1026,6 +1433,7 @@ def build_windows_targets(scope, profile, include_trash, include_package_caches)
         for app_root in electron_roots:
             add_electron_app_targets(targets, seen, f"{home.name} {app_root.name}", app_root)
         add_windows_electron_catalog_targets(targets, seen, home.name, roaming)
+        add_windows_tencent_targets(targets, seen, home)
 
         for idea_root in expand_existing_dirs(local / "JetBrains" / "*"):
             add_target(targets, seen, f"{home.name} {idea_root.name} caches", idea_root / "caches", "purge_dir", "app-cache")
@@ -1057,15 +1465,30 @@ def build_windows_targets(scope, profile, include_trash, include_package_caches)
                 add_target(targets, seen, f"{home.name} {ac_temp.parent.parent.name} AC Temp", ac_temp, "purge_dir", "app-cache")
             for ac_inet_cache in expand_existing_dirs(packages_root / "*" / "AC" / "INetCache"):
                 add_target(targets, seen, f"{home.name} {ac_inet_cache.parent.parent.name} AC INetCache", ac_inet_cache, "purge_dir", "app-cache")
+            for local_cache in expand_existing_dirs(packages_root / "*" / "LocalCache"):
+                add_subdir_targets(
+                    targets,
+                    seen,
+                    f"{home.name} {local_cache.parent.name} LocalCache",
+                    local_cache,
+                    UWP_LOCAL_CACHE_SUBDIRS,
+                    "app-cache",
+                )
 
         if include_package_caches:
             for package_cache in (
                 local / "pip" / "Cache",
                 local / "uv" / "cache",
                 local / "npm-cache" / "_cacache",
+                local / "npm-cache" / "_npx",
                 local / "Yarn" / "Cache",
+                local / "go-build",
                 home / ".cargo" / "registry" / "cache",
                 home / ".cargo" / "git" / "db",
+                home / ".gradle" / "caches",
+                home / ".nuget" / "packages-cache",
+                home / ".nuget" / "v3-cache",
+                home / ".nuget" / "plugins-cache",
                 local / "pnpm-store",
                 home / ".pnpm-store",
             ):
@@ -1211,6 +1634,8 @@ def summarize_target(target):
         total_size, total_items = summarize_purge_dir(target.path, errors)
     elif target.kind == "temp_dir":
         total_size, total_items = summarize_temp_dir(target.path, target.min_age_hours, errors)
+    elif target.kind == "stale_dir":
+        total_size, total_items = summarize_stale_dir(target.path, target.min_age_hours, errors, target.age_mode)
     elif target.kind == "match_files":
         total_size, total_items = summarize_match_files(target.path, target.patterns, target.min_age_hours, errors)
     elif target.kind == "single_file":
@@ -1234,6 +1659,8 @@ def clean_target(target):
         total_size, total_items, skipped = clean_purge_dir(target.path, errors)
     elif target.kind == "temp_dir":
         total_size, total_items, skipped = clean_temp_dir(target.path, target.min_age_hours, errors)
+    elif target.kind == "stale_dir":
+        total_size, total_items, skipped = clean_stale_dir(target.path, target.min_age_hours, errors, target.age_mode)
     elif target.kind == "match_files":
         total_size, total_items, skipped = clean_match_files(target.path, target.patterns, target.min_age_hours, errors)
     elif target.kind == "single_file":
@@ -1251,7 +1678,7 @@ def clean_target(target):
     }
 
 
-def compile_report(entries, volumes, os_name, scope, profile, include_trash, include_package_caches):
+def compile_report(entries, volumes, os_name, scope, profile, level, include_trash, include_package_caches):
     category_totals = {}
     total_bytes = 0
     total_items = 0
@@ -1278,6 +1705,7 @@ def compile_report(entries, volumes, os_name, scope, profile, include_trash, inc
         "os": os_name,
         "scope": scope,
         "profile": profile,
+        "level": level,
         "include_trash": include_trash,
         "include_package_caches": include_package_caches,
         "volumes": [str(volume) for volume in volumes],
@@ -1298,11 +1726,253 @@ def compile_report(entries, volumes, os_name, scope, profile, include_trash, inc
     }
 
 
+def build_panel_report(entries):
+    system_drive = normalize_path_text(os.environ.get("SystemDrive", "C:\\")) + "\\"
+    panels = []
+    for specialty in SPECIALTY_CHOICES:
+        matched_entries = [
+            entry
+            for entry in entries
+            if entry["bytes"] > 0 and entry_matches_specialty(entry, specialty, system_drive)
+        ]
+        matched_entries.sort(key=lambda item: item["bytes"], reverse=True)
+        panels.append(
+            {
+                "id": specialty,
+                "title": SPECIALTY_TITLES[specialty],
+                "bytes": sum(entry["bytes"] for entry in matched_entries),
+                "targets": len(matched_entries),
+                "largest_targets": matched_entries[:5],
+            }
+        )
+    return {"panels": panels}
+
+
+def should_skip_content_dir(path, os_name):
+    if is_symlink_like(path):
+        return True
+    name = path.name.lower()
+    if os_name == "windows" and name in WINDOWS_CONTENT_SCAN_SKIP_DIRS:
+        return True
+    return False
+
+
+def iter_content_files(volumes, os_name, min_size_bytes=0, extensions=None):
+    stack = [volume for volume in reversed(volumes) if volume.exists()]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    entry_path = Path(entry.path)
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            if should_skip_content_dir(entry_path, os_name):
+                                continue
+                            stack.append(entry_path)
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        if extensions and entry_path.suffix.lower() not in extensions:
+                            continue
+                        stat_result = entry.stat(follow_symlinks=False)
+                        if stat_result.st_size < min_size_bytes:
+                            continue
+                        yield entry_path, stat_result.st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+
+def build_large_file_report(volumes, os_name, min_size_mb, limit):
+    min_size_bytes = max(1, int(min_size_mb)) * 1024 * 1024
+    heap = []
+    scanned_files = 0
+    for path, size in iter_content_files(volumes, os_name, min_size_bytes=min_size_bytes):
+        scanned_files += 1
+        item = (size, str(path))
+        if len(heap) < limit:
+            heapq.heappush(heap, item)
+        elif size > heap[0][0]:
+            heapq.heapreplace(heap, item)
+    candidates = [
+        {"bytes": size, "path": path}
+        for size, path in sorted(heap, key=lambda item: item[0], reverse=True)
+    ]
+    return {
+        "mode": "large-files",
+        "advisory_only": True,
+        "min_size_mb": min_size_mb,
+        "scanned_files": scanned_files,
+        "candidates": candidates,
+    }
+
+
+def file_quick_hash(path, size):
+    hasher = hashlib.sha256()
+    chunk_size = 1024 * 1024
+    with path.open("rb") as handle:
+        if size <= chunk_size * 2:
+            hasher.update(handle.read())
+        else:
+            hasher.update(handle.read(chunk_size))
+            handle.seek(-chunk_size, os.SEEK_END)
+            hasher.update(handle.read(chunk_size))
+    return hasher.hexdigest()
+
+
+def file_full_hash(path):
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def build_duplicate_report(volumes, os_name, min_size_mb, limit):
+    min_size_bytes = max(1, int(min_size_mb)) * 1024 * 1024
+    by_size = {}
+    scanned_files = 0
+    for path, size in iter_content_files(
+        volumes,
+        os_name,
+        min_size_bytes=min_size_bytes,
+        extensions=DUPLICATE_SCAN_EXTENSIONS,
+    ):
+        scanned_files += 1
+        by_size.setdefault(size, []).append(path)
+
+    duplicate_groups = []
+    for size, paths in sorted(by_size.items(), key=lambda item: item[0], reverse=True):
+        if len(paths) < 2:
+            continue
+        quick_groups = {}
+        for path in paths:
+            try:
+                quick_groups.setdefault(file_quick_hash(path, size), []).append(path)
+            except OSError:
+                continue
+        for quick_hash, quick_paths in quick_groups.items():
+            del quick_hash
+            if len(quick_paths) < 2:
+                continue
+            full_groups = {}
+            for path in quick_paths:
+                try:
+                    full_groups.setdefault(file_full_hash(path), []).append(path)
+                except OSError:
+                    continue
+            for full_hash, full_paths in full_groups.items():
+                del full_hash
+                if len(full_paths) < 2:
+                    continue
+                duplicate_groups.append(
+                    {
+                        "bytes": size,
+                        "count": len(full_paths),
+                        "wasted_bytes": size * (len(full_paths) - 1),
+                        "files": [str(path) for path in sorted(full_paths)],
+                    }
+                )
+
+    duplicate_groups.sort(
+        key=lambda item: (item["wasted_bytes"], item["bytes"], item["count"]),
+        reverse=True,
+    )
+    return {
+        "mode": "duplicates",
+        "advisory_only": True,
+        "min_size_mb": min_size_mb,
+        "scanned_files": scanned_files,
+        "groups": duplicate_groups[:limit],
+    }
+
+
+def build_global_stale_report(volumes, os_name, min_age_hours, limit):
+    stale_threshold = now_ts() - (min_age_hours * 3600)
+    stack = [volume for volume in reversed(volumes) if volume.exists()]
+    matched_files = 0
+    scanned_files = 0
+    file_heap = []
+    folder_totals = {}
+    folder_counts = {}
+
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    entry_path = Path(entry.path)
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            if should_skip_content_dir(entry_path, os_name):
+                                continue
+                            stack.append(entry_path)
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        scanned_files += 1
+                        stat_result = entry.stat(follow_symlinks=False)
+                        activity_ts = max(stat_result.st_atime, stat_result.st_mtime)
+                        if activity_ts > stale_threshold:
+                            continue
+                        matched_files += 1
+                        size = stat_result.st_size
+                        item = (size, str(entry_path), activity_ts)
+                        if len(file_heap) < limit:
+                            heapq.heappush(file_heap, item)
+                        elif size > file_heap[0][0]:
+                            heapq.heapreplace(file_heap, item)
+                        parent_text = str(entry_path.parent)
+                        folder_totals[parent_text] = folder_totals.get(parent_text, 0) + size
+                        folder_counts[parent_text] = folder_counts.get(parent_text, 0) + 1
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+    top_files = [
+        {
+            "bytes": size,
+            "path": path,
+            "activity_ts": activity_ts,
+        }
+        for size, path, activity_ts in sorted(file_heap, key=lambda item: item[0], reverse=True)
+    ]
+    top_folders = [
+        {
+            "bytes": total_bytes,
+            "items": folder_counts[path],
+            "path": path,
+        }
+        for path, total_bytes in sorted(folder_totals.items(), key=lambda item: item[1], reverse=True)[:limit]
+    ]
+    return {
+        "mode": "global-stale-review",
+        "advisory_only": True,
+        "age_mode": "activity",
+        "min_age_hours": min_age_hours,
+        "scanned_files": scanned_files,
+        "matched_files": matched_files,
+        "largest_files": top_files,
+        "largest_folders": top_folders,
+    }
+
+
 def print_human_report(title, report):
     print(title)
     print(f"Platform: {report['os']}")
     print(f"Scope: {report['scope']}")
     print(f"Profile: {report['profile']}")
+    print(f"Level: {report['level']}")
     print(f"Mounted local volumes: {', '.join(report['volumes']) or 'none detected'}")
     print(f"Reclaimable space: {format_bytes(report['total_bytes'])}")
     print(f"Eligible files: {report['total_items']}")
@@ -1326,6 +1996,67 @@ def print_human_report(title, report):
         print("Sample errors:")
         for message in report["errors"][:5]:
             print(f"  - {message}")
+
+
+def print_panel_report(report):
+    print("Special Cleanup Panels")
+    print("")
+    for panel in report["panels"]:
+        print(f"{panel['title']}: {format_bytes(panel['bytes'])}")
+        if panel["largest_targets"]:
+            for item in panel["largest_targets"][:3]:
+                print(f"  - {item['label']}: {format_bytes(item['bytes'])}")
+        else:
+            print("  - nothing matched")
+        print("")
+
+
+def print_large_file_report(report):
+    print("Large Files Review")
+    print("Advisory only: review before deleting anything.")
+    print(f"Minimum file size: {report['min_size_mb']} MiB")
+    print(f"Matched files: {report['scanned_files']}")
+    print("")
+    if not report["candidates"]:
+        print("No large files matched the current threshold.")
+        return
+    for item in report["candidates"]:
+        print(f"  - {format_bytes(item['bytes'])}: {item['path']}")
+
+
+def print_duplicate_report(report):
+    print("Duplicate Files Review")
+    print("Advisory only: duplicates may still be useful.")
+    print(f"Minimum file size: {report['min_size_mb']} MiB")
+    print(f"Scanned candidate files: {report['scanned_files']}")
+    print("")
+    if not report["groups"]:
+        print("No duplicate groups matched the current threshold.")
+        return
+    for group in report["groups"]:
+        print(f"  - {format_bytes(group['wasted_bytes'])} recoverable across {group['count']} files of {format_bytes(group['bytes'])} each")
+        for file_path in group["files"][:5]:
+            print(f"      {file_path}")
+
+
+def print_global_stale_report(report):
+    print("Global Stale Review")
+    print("Advisory only: ordinary user files are not auto-deleted.")
+    print(f"Minimum age: about {int(report['min_age_hours'] / 24 / 365)} years")
+    print(f"Scanned files: {report['scanned_files']}")
+    print(f"Matched stale files: {report['matched_files']}")
+    print("")
+    if report["largest_folders"]:
+        print("Folders with the most stale content:")
+        for item in report["largest_folders"][:5]:
+            print(f"  - {format_bytes(item['bytes'])} across {item['items']} files: {item['path']}")
+        print("")
+    if report["largest_files"]:
+        print("Largest stale files:")
+        for item in report["largest_files"][:10]:
+            print(f"  - {format_bytes(item['bytes'])}: {item['path']}")
+    else:
+        print("No stale files matched the current rules.")
 
 
 def build_supported_software_summary():
@@ -1388,6 +2119,8 @@ def prompt_yes_no(label, default):
 
 
 def resolve_interactive_args(args):
+    if args.level is None:
+        args.level = int(prompt_choice("Cleanup level", ("1", "2"), "1"))
     if args.scope is None:
         args.scope = prompt_choice("Cleanup scope", ("user", "machine"), "machine")
     if args.profile is None:
@@ -1404,6 +2137,8 @@ def resolve_interactive_args(args):
 
 
 def resolve_defaults(args):
+    if args.level is None:
+        args.level = 1
     if args.scope is None:
         args.scope = "machine"
     if args.profile is None:
@@ -1426,6 +2161,7 @@ def build_parser():
         default="scan",
         help="scan only or clean after scanning",
     )
+    parser.add_argument("--level", type=int, choices=CLEANUP_LEVEL_CHOICES, help="cleanup level: 1 keeps current safe behavior, 2 adds deeper WeChat or QQ resource cleanup plus a global 2-year stale-file review across local drives")
     parser.add_argument("--scope", choices=("user", "machine"))
     parser.add_argument("--profile", choices=("conservative", "standard", "aggressive"))
     add_bool_flag(parser, "include-trash", "include recycle bin or trash contents")
@@ -1434,6 +2170,17 @@ def build_parser():
     parser.add_argument("--interactive", action="store_true", help="ask for scope, profile, and confirmation")
     parser.add_argument("--json", action="store_true", help="emit JSON instead of human-readable text")
     parser.add_argument("--list-supported-software", action="store_true", help="show the curated software catalog and exit")
+    parser.add_argument(
+        "--specialty",
+        action="append",
+        choices=SPECIALTY_CHOICES,
+        help="limit cleanup to a specialty panel such as qq, wechat, common, developer, residual, or system-drive",
+    )
+    parser.add_argument("--panel-summary", action="store_true", help="show specialty panel totals for the current scan")
+    parser.add_argument("--large-files", action="store_true", help="scan for large user files and report only")
+    parser.add_argument("--duplicate-files", action="store_true", help="scan for duplicate user files and report only")
+    parser.add_argument("--min-file-size-mb", type=int, default=512, help="minimum file size in MiB for large-file or duplicate-file review")
+    parser.add_argument("--top", type=int, default=20, help="maximum number of large-file items or duplicate groups to report")
     return parser
 
 
@@ -1450,10 +2197,43 @@ def main():
             print_supported_software(summary)
         return 0
 
+    if args.large_files and args.duplicate_files:
+        parser.error("--large-files and --duplicate-files are mutually exclusive")
+
     if args.interactive:
         args = resolve_interactive_args(args)
     else:
         args = resolve_defaults(args)
+
+    if args.large_files:
+        _, volumes = build_targets(
+            os_name,
+            args.scope,
+            args.profile,
+            args.include_trash,
+            args.include_package_caches,
+        )
+        report = build_large_file_report(volumes, os_name, args.min_file_size_mb, args.top)
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print_large_file_report(report)
+        return 0
+
+    if args.duplicate_files:
+        _, volumes = build_targets(
+            os_name,
+            args.scope,
+            args.profile,
+            args.include_trash,
+            args.include_package_caches,
+        )
+        report = build_duplicate_report(volumes, os_name, args.min_file_size_mb, args.top)
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print_duplicate_report(report)
+        return 0
 
     if args.action == "clean" and not args.execute and not args.interactive:
         parser.error("clean requires --execute unless --interactive is used")
@@ -1465,6 +2245,11 @@ def main():
         args.include_trash,
         args.include_package_caches,
     )
+    targets = filter_targets_by_level(targets, args.level)
+    targets = filter_targets_by_specialties(targets, args.specialty)
+    global_stale_report = None
+    if args.level >= 2:
+        global_stale_report = build_global_stale_report(volumes, os_name, LEVEL_TWO_STALE_HOURS, args.top)
 
     scan_entries = [summarize_target(target) for target in targets]
     scan_report = compile_report(
@@ -1473,14 +2258,27 @@ def main():
         os_name,
         args.scope,
         args.profile,
+        args.level,
         args.include_trash,
         args.include_package_caches,
     )
+    panel_report = build_panel_report(scan_entries)
 
     if args.json and args.action != "clean":
-        print(json.dumps({"scan": scan_report}, indent=2))
+        payload = {"scan": scan_report}
+        if args.panel_summary or args.specialty:
+            payload["panels"] = panel_report
+        if global_stale_report is not None:
+            payload["global_stale_review"] = global_stale_report
+        print(json.dumps(payload, indent=2))
     elif not args.json:
         print_human_report("Scan Report", scan_report)
+        if args.panel_summary or args.specialty:
+            print("")
+            print_panel_report(panel_report)
+        if global_stale_report is not None:
+            print("")
+            print_global_stale_report(global_stale_report)
 
     should_clean = args.action == "clean"
     if args.interactive and not should_clean:
@@ -1498,15 +2296,31 @@ def main():
         os_name,
         args.scope,
         args.profile,
+        args.level,
         args.include_trash,
         args.include_package_caches,
     )
+    clean_panel_report = build_panel_report(clean_entries)
 
     if args.json:
-        print(json.dumps({"scan": scan_report, "clean": clean_report}, indent=2))
+        payload = {"scan": scan_report, "clean": clean_report}
+        if args.panel_summary or args.specialty:
+            payload["panels"] = {
+                "scan": panel_report,
+                "clean": clean_panel_report,
+            }
+        if global_stale_report is not None:
+            payload["global_stale_review"] = global_stale_report
+        print(json.dumps(payload, indent=2))
     else:
         print("")
         print_human_report("Cleanup Report", clean_report)
+        if args.panel_summary or args.specialty:
+            print("")
+            print_panel_report(clean_panel_report)
+        if global_stale_report is not None:
+            print("")
+            print_global_stale_report(global_stale_report)
     return 0
 
 

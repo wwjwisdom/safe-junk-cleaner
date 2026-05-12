@@ -40,12 +40,20 @@ User-scope targets:
 - `%LOCALAPPDATA%\D3DSCache`
 - common GPU shader caches under NVIDIA and AMD local-cache paths
 - Chromium-family caches for Chrome, Edge, Brave, Vivaldi, Opera, Quark, and similar user-data layouts
+- Chromium-family `Service Worker` caches and media caches under explicit profile cache paths
 - Firefox `cache2` and thumbnails
-- Electron-style caches for common apps such as VS Code, Cursor, Docker Desktop, Discord, GitHub Desktop, Slack, Teams, Notion, Obsidian, Postman, QQ, and Xmind
+- Electron-style caches for common apps such as VS Code, Cursor, Docker Desktop, Discord, GitHub Desktop, Slack, Teams, Notion, Obsidian, Postman, QQ, and Xmind, including explicit `Service Worker` cache paths
 - app-specific logs and updater leftovers for curated targets such as DingTalk, QQ, and Squirrel-based updaters
+- Tencent-family specialty coverage for explicit safe subpaths only: xwechat logs, crash reports, updater caches, QQ NT log-cache, QQ avatar temp, QQ updater leftovers, WeMeet logs, WeMeet update packages, WeMeet upgrade caches, and QQBrowser profile caches
+- In cleanup `level 2`, Tencent-family coverage goes deeper on explicit WeChat or QQ image-resource cache paths such as xwechat embedded-web caches, xwechat CDN cache roots, and QQ NT avatar or thumbnail cache roots. Deeper media-resource paths use a two-year stale-activity rule instead of blanket deletion.
+- In cleanup `level 2`, the tool also performs a global stale-file review across local drives outside the usual system-folder skip set. This review is advisory for ordinary user files and folders and should not be treated as automatic-delete permission.
 - Adobe media caches and JetBrains `caches`, `tmp`, and `log`
-- UWP `TempState`, `AC\Temp`, and `AC\INetCache` folders
+- UWP `TempState`, `AC\Temp`, `AC\INetCache`, and selected `LocalCache` cache-only subfolders
 - broad Electron-family coverage for collaboration, developer, and productivity apps through explicit app-name whitelists
+
+Advisory scan modules:
+- large-file review across local content areas with system folders skipped
+- duplicate-file review using size plus content hashing for manual review only
 
 Machine-scope additions:
 - `%SystemRoot%\Temp`
@@ -58,7 +66,7 @@ Machine-scope additions:
 - old CBS and DISM logs in aggressive mode
 
 Aggressive additions:
-- pip, uv, npm, pnpm, yarn, and Cargo caches
+- pip, uv, npm, pnpm, yarn, Cargo, Go build, Gradle, and NuGet caches
 
 ## macOS Coverage
 
@@ -105,10 +113,11 @@ Aggressive additions:
 
 ## Interaction Rules
 
-When the user is vague, ask three short questions:
+When the user is vague, ask four short questions:
 1. current account or whole machine
 2. standard or aggressive
-3. include recycle bin or trash or not
+3. cleanup level 1 or 2
+4. include recycle bin or trash or not
 
 Then run a dry scan first. Summarize the estimated reclaimable space before you delete anything.
 
@@ -121,5 +130,6 @@ python3 scripts/safe_junk_cleaner.py --list-supported-software
 ## Risk Notes
 
 - `aggressive` is still meant to be safe, but it trades convenience for space by removing rebuildable developer caches.
+- `level 2` is stronger than level 1. Automatic deletion should stay constrained to curated junk and explicit WeChat or QQ cache-resource paths. Global stale-file matches across arbitrary user-content folders should remain review-first.
 - Some files will be skipped if they are locked by running apps. Report those skips instead of forcing deletion.
 - If whole-machine cleanup hits protected system paths, report that elevation is required for those categories.

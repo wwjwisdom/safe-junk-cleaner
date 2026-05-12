@@ -9,6 +9,23 @@ Use this skill to run a strong but conservative disk cleanup. Prefer high-yield 
 
 This skill maintains a curated catalog covering 100+ common professional apps or app families across browsers, communication tools, developer tools, IDEs, creative tools, and knowledge-work apps. The scan logic is still whitelist-based: support means "look only at known cache, temp, updater, crash, shader, and log paths for that app."
 
+It also supports screenshot-style specialty panels so the user can ask for focused cleanup such as:
+- system-drive cleanup
+- common junk cleanup
+- WeChat cleanup
+- QQ cleanup
+- software-leftovers cleanup
+- developer-cache cleanup
+
+Large-file review and duplicate-file review are supported as advisory scans only. They report candidates for manual review and do not auto-delete.
+
+## Cleanup Levels
+
+- `level 1`: the current default behavior. Clean curated temp, cache, log, crash, shader, trash, updater, and package-cache targets.
+- `level 2`: everything in level 1, plus deeper WeChat or QQ image or resource cache cleanup, and a global review of files or folders across local drives whose activity appears cold for about two years.
+
+For level 2, "two years without activity" uses the newest of last-access time and last-modified time when available. On Windows, last-access time is not always updated consistently, so treat level 2 as stronger. Global stale-file results are advisory by default: ordinary user files should be reviewed before deletion, while automatic cleanup still stays inside curated junk and cache paths.
+
 ## Interaction Contract
 
 Match the user's language.
@@ -16,9 +33,11 @@ Match the user's language.
 If the user has not already specified the cleanup shape, ask a short question set before deleting anything:
 1. `scope`: current account or whole machine
 2. `profile`: standard or aggressive
-3. recycle bin or trash: include or skip
+3. `level`: 1 or 2
+4. recycle bin or trash: include or skip
 
 Recommend `standard`. Use `aggressive` only after warning that it also clears package-manager and developer caches, so the next install or first launch may be slower.
+Recommend `level 1` by default. Use `level 2` only after warning that it goes deeper on WeChat or QQ cached images or resource files and also produces a global two-year stale-file review across local drives. Do not present the global stale review as safe to auto-delete without path-by-path review.
 
 After you have the answers:
 1. Run a dry scan
@@ -55,6 +74,15 @@ Cleanup:
 python3 scripts/safe_junk_cleaner.py clean --scope machine --profile standard --include-trash --execute --json
 ```
 
+Level-based cleanup:
+
+```bash
+python3 scripts/safe_junk_cleaner.py scan --scope machine --profile aggressive --level 1 --panel-summary
+python3 scripts/safe_junk_cleaner.py scan --scope machine --profile aggressive --level 2 --panel-summary
+python3 scripts/safe_junk_cleaner.py scan --scope machine --profile aggressive --level 2 --specialty wechat --panel-summary
+python3 scripts/safe_junk_cleaner.py clean --scope machine --profile aggressive --level 2 --specialty qq --execute --json
+```
+
 Terminal-guided mode:
 
 ```bash
@@ -67,14 +95,37 @@ Show the current supported software catalog:
 python3 scripts/safe_junk_cleaner.py --list-supported-software
 ```
 
+Show specialty panels for the current scan:
+
+```bash
+python3 scripts/safe_junk_cleaner.py scan --scope machine --profile aggressive --include-trash --include-package-caches --panel-summary
+```
+
+Run only one specialty panel, for example WeChat or QQ:
+
+```bash
+python3 scripts/safe_junk_cleaner.py scan --scope machine --profile aggressive --specialty wechat --panel-summary
+python3 scripts/safe_junk_cleaner.py clean --scope machine --profile aggressive --specialty qq --execute --json
+```
+
+Review large files or duplicate files without deleting them:
+
+```bash
+python3 scripts/safe_junk_cleaner.py --large-files --min-file-size-mb 512 --top 20
+python3 scripts/safe_junk_cleaner.py --duplicate-files --min-file-size-mb 128 --top 20
+```
+
 ## Choosing Scope and Strength
 
 - `scope user`: clean the current user's junk only. Use this when the user wants a lower-risk cleanup or does not have admin rights.
 - `scope machine`: clean the current user plus system temp or crash areas and every accessible local user profile on every mounted local drive. Use this when the user wants the whole computer cleaned.
 - `profile conservative`: older temp files and the safest cache targets.
 - `profile standard`: recommended. Clear temp, browser or app caches, crash dumps, thumbnails, logs, and optional recycle-bin or trash contents.
+- `level 1`: the baseline behavior and the default for normal cleanup.
+- `level 2`: adds deeper WeChat or QQ image or resource cache cleanup plus a global two-year stale-file review across local drives. Automatic deletion still remains restricted to curated junk, cache, log, crash, temp, updater, and explicit WeChat or QQ cache-resource paths.
 - In `standard`, also clear curated desktop-app cache directories such as Electron caches, selected Chromium-derived app caches, updater leftovers, Adobe media caches, JetBrains caches, and app log folders that are safe to rebuild.
-- `profile aggressive`: everything in `standard` plus package-manager and developer caches that are safe to rebuild but may slow the next install or first app launch.
+- In `standard`, also include explicit web-runtime caches such as Chromium or Electron `Service Worker` caches and selected UWP `LocalCache` cache folders when they are clearly cache-only paths.
+- `profile aggressive`: everything in `standard` plus package-manager and developer caches that are safe to rebuild but may slow the next install or first app launch, including caches such as `npm _cacache`, `npm _npx`, `go-build`, `uv`, `pip`, `pnpm`, `yarn`, Cargo, Gradle, and NuGet caches when present.
 
 ## Software Coverage
 
@@ -107,6 +158,7 @@ Read [references/coverage.md](references/coverage.md) when you need the full tar
 
 Highlights:
 - Windows: temp folders, WER, crash dumps, browser caches, shader caches, thumbnail caches, recycle bins on each drive, and curated app caches for Electron apps, Chromium-derived apps, Adobe media caches, JetBrains caches, DingTalk logs, and QQ cache partitions.
+- Windows specialty coverage also includes Tencent-family safe paths such as xwechat logs, crash reports, updater caches, QQ NT log-cache and avatar temp, QQ updater leftovers, WeMeet logs, WeMeet update packages, and explicit QQBrowser user-data caches.
 - macOS: `~/Library/Caches`, `~/Library/Logs`, crash reports, `.Trash`, system temp, mounted-volume trash folders, and common Electron app caches under `~/Library/Application Support`.
 - Linux: `~/.cache`, selected Chromium and Electron app caches under `~/.config`, `/tmp`, `/var/tmp`, `/var/crash`, trash folders, and optional package caches in aggressive mode.
 
@@ -114,7 +166,9 @@ Highlights:
 
 Tell the user:
 - what scope and profile you used
+- what level you used
 - estimated space found and space actually removed
 - the three to five biggest categories
 - what you intentionally did not touch
+- whether level 2 produced global stale-file candidates that still need manual review
 - what to rerun with admin rights if they want deeper whole-machine cleanup
