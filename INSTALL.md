@@ -1,230 +1,193 @@
 # Installation Guide
 
-本指南介绍如何在主流 AI Agent 中安装 safe-junk-cleaner skill。
+This repository can be used from several mainstream AI agents.
 
-## 目录
+## Support Matrix
 
-- [Claude Code](#claude-code)
-- [Cursor](#cursor)
-- [Windsurf](#windsurf)
-- [Codex](#codex)
-- [通用方法](#通用方法)
+| Agent | Integration style | Recommended path |
+| --- | --- | --- |
+| Codex | Native skill | `~/.codex/skills/safe-junk-cleaner` |
+| Claude Code | Native skill | `~/.claude/skills/safe-junk-cleaner` |
+| Gemini CLI | Custom command | `~/.gemini/commands/safe-junk-cleaner.toml` |
+| OpenCode | Custom command | `.opencode/commands/safe-junk-cleaner.md` |
 
----
+## 1. Codex
 
-## Claude Code
+Codex uses filesystem skills discovered under `$CODEX_HOME/skills` or `~/.codex/skills`.
 
-### 方法一：全局安装（推荐）
-
-全局安装后，所有项目都可以使用该 skill。
-
-```bash
-# 1. 克隆到全局技能目录
-git clone https://github.com/YOUR_USERNAME/safe-junk-cleaner.git ~/.claude/skills/safe-junk-cleaner
-
-# 2. 重启 Claude Code 应用
-```
-
-### 方法二：项目级安装
-
-仅在当前项目中可用。
+Global install:
 
 ```bash
-# 1. 进入项目根目录
-cd /path/to/your/project
-
-# 2. 克隆到项目技能目录
-git clone https://github.com/YOUR_USERNAME/safe-junk-cleaner.git .claude/skills/safe-junk-cleaner
-
-# 3. 重启 Claude Code
+git clone https://github.com/YOUR_GITHUB_USERNAME/safe-junk-cleaner.git ~/.codex/skills/safe-junk-cleaner
 ```
 
-### 使用方法
+Then use it naturally in chat, or name the skill explicitly:
 
-在 Claude Code 中直接对话：
-
-```
-请帮我清理一下电脑的垃圾文件
-扫描一下能释放多少空间
+```text
+$safe-junk-cleaner
 ```
 
----
+Examples:
 
-## Cursor
+```text
+Use $safe-junk-cleaner to scan my whole machine and ask before deleting anything.
+Use $safe-junk-cleaner to clean browser and app caches in standard mode.
+```
 
-Cursor 支持类似 Claude 的技能系统。
+## 2. Claude Code
 
-### 安装步骤
+Claude Code supports reusable skills under `~/.claude/skills/<skill-name>/SKILL.md` and also project-level skills under `.claude/skills/`.
+
+Global install:
 
 ```bash
-# 全局安装（推荐）
-git clone https://github.com/YOUR_USERNAME/safe-junk-cleaner.git ~/.cursor/skills/safe-junk-cleaner
-
-# 重启 Cursor
+git clone https://github.com/YOUR_GITHUB_USERNAME/safe-junk-cleaner.git ~/.claude/skills/safe-junk-cleaner
 ```
 
-或在项目目录中：
+Project-level install:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/safe-junk-cleaner.git .cursor/skills/safe-junk-cleaner
+mkdir -p .claude/skills
+git clone https://github.com/YOUR_GITHUB_USERNAME/safe-junk-cleaner.git .claude/skills/safe-junk-cleaner
 ```
 
-### 使用方法
+Then ask Claude naturally, or mention the skill explicitly:
 
-在 Cursor 的 AI Chat 中输入：
-
-```
-我想清理临时文件和缓存
+```text
+$safe-junk-cleaner
 ```
 
----
+Examples:
 
-## Windsurf
+```text
+Use $safe-junk-cleaner to scan the whole machine in standard mode.
+Use $safe-junk-cleaner to clean browser caches and app caches after a dry run.
+```
 
-Windsurf 使用 `.windsurf/skills` 目录。
+## 3. Gemini CLI
 
-### 安装步骤
+Gemini CLI supports custom commands in:
+
+- global: `~/.gemini/commands/`
+- project: `.gemini/commands/`
+
+This repository ships a command template at:
+
+```text
+integrations/gemini-cli/safe-junk-cleaner.toml
+```
+
+### Recommended install
+
+1. Clone this repository somewhere stable:
 
 ```bash
-# 全局安装
-git clone https://github.com/YOUR_USERNAME/safe-junk-cleaner.git ~/.windsurf/skills/safe-junk-cleaner
-
-# 或项目级安装
-git clone https://github.com/YOUR_USERNAME/safe-junk-cleaner.git .windsurf/skills/safe-junk-cleaner
+git clone https://github.com/YOUR_GITHUB_USERNAME/safe-junk-cleaner.git ~/ai-skills/safe-junk-cleaner
 ```
 
-### 使用方法
+2. Copy the template into Gemini's global commands directory:
 
-在 Windsurf 的 AI 面板中使用。
-
----
-
-## Codex
-
-Codex 使用 `.codex/skills` 目录。
-
-### 安装步骤
+macOS or Linux:
 
 ```bash
-# 注意：你当前的目录结构就是 .codex/skills
-# 如果要在 Codex 中安装，可以直接在 .codex/skills 目录下运行：
-
-cd ~/.codex/skills
-git clone https://github.com/YOUR_USERNAME/safe-junk-cleaner.git safe-junk-cleaner
-
-# 重启 Codex
+mkdir -p ~/.gemini/commands
+cp ~/ai-skills/safe-junk-cleaner/integrations/gemini-cli/safe-junk-cleaner.toml ~/.gemini/commands/
 ```
 
-### 使用方法
+Windows PowerShell:
 
-在 Codex 的对话中使用：
-
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.gemini\commands" | Out-Null
+Copy-Item "$env:USERPROFILE\ai-skills\safe-junk-cleaner\integrations\gemini-cli\safe-junk-cleaner.toml" "$env:USERPROFILE\.gemini\commands\"
 ```
-帮我安全清理磁盘垃圾文件
+
+3. Edit the copied file and replace `REPO_PATH` with the real repository path.
+
+4. Use the command:
+
+```text
+/safe-junk-cleaner scan whole machine in standard mode
 ```
 
----
+## 4. OpenCode
 
-## 通用方法
+OpenCode supports project command files in `.opencode/commands/`.
 
-### 手动安装到任何目录
+This repository ships a command template at:
+
+```text
+integrations/opencode/safe-junk-cleaner.md
+```
+
+### Recommended install
+
+1. Clone this repository somewhere stable:
 
 ```bash
-# 1. 克隆仓库
-git clone https://github.com/YOUR_USERNAME/safe-junk-cleaner.git
-
-# 2. 进入目录
-cd safe-junk-cleaner
-
-# 3. 直接运行脚本
-python3 safe_junk_cleaner.py --interactive
+git clone https://github.com/YOUR_GITHUB_USERNAME/safe-junk-cleaner.git ~/ai-skills/safe-junk-cleaner
 ```
 
-### Python 包安装
+2. Copy the template into a project command directory:
+
+macOS or Linux:
 
 ```bash
-# 从 GitHub 安装
-pip install git+https://github.com/YOUR_USERNAME/safe-junk-cleaner.git
-
-# 使用
-python -m safe_junk_cleaner --interactive
+mkdir -p .opencode/commands
+cp ~/ai-skills/safe-junk-cleaner/integrations/opencode/safe-junk-cleaner.md .opencode/commands/
 ```
 
----
+Windows PowerShell:
 
-## 验证安装
+```powershell
+New-Item -ItemType Directory -Force -Path ".opencode\commands" | Out-Null
+Copy-Item "$env:USERPROFILE\ai-skills\safe-junk-cleaner\integrations\opencode\safe-junk-cleaner.md" ".opencode\commands\"
+```
 
-安装后，可以通过以下方式验证：
+3. Edit the copied file and replace `REPO_PATH` with the real repository path.
 
-### 1. 检查文件结构
+4. Use the command:
+
+```text
+/safe-junk-cleaner scan user scope in standard mode
+```
+
+## 5. Generic CLI Usage
+
+You can always run the script directly:
 
 ```bash
-ls -la safe-junk-cleaner/
-# 应该看到：SKILL.md, scripts/, references/, agents/ 等文件
+python3 scripts/safe_junk_cleaner.py --interactive
 ```
 
-### 2. 运行测试扫描
+Dry scan:
 
 ```bash
-cd safe-junk-cleaner/scripts
-python3 safe_junk_cleaner.py scan --scope user --profile standard
+python3 scripts/safe_junk_cleaner.py scan --scope machine --profile standard --include-trash --json
 ```
 
-### 3. 在 AI Agent 中测试
-
-在你的 AI Agent 中输入：
-
-```
-使用 safe-junk-cleaner 扫描一下我的电脑
-```
-
-如果正常工作，它会询问清理范围和配置。
-
----
-
-## 常见问题
-
-### Q: 安装后 AI Agent 识别不到 skill？
-
-**A:** 确保目录结构完整，并且重启了 AI Agent 应用。
-
-### Q: 运行时提示找不到 Python？
-
-**A:** 确保 Python 3 已安装，使用 `python3`、`py -3` 或 `python` 命令。
-
-### Q: Windows 上权限问题？
-
-**A:** 某些系统级清理需要管理员权限，以管理员身份运行终端。
-
-### Q: 能否清理其他用户的数据？
-
-**A:** `--scope machine` 会清理所有可访问的用户配置文件，但需要相应权限。
-
----
-
-## 更新
+Cleanup:
 
 ```bash
-cd ~/.claude/skills/safe-junk-cleaner  # 或你的安装目录
-git pull origin main
+python3 scripts/safe_junk_cleaner.py clean --scope machine --profile standard --include-trash --execute --json
 ```
 
----
+## Verification
 
-## 卸载
+List the supported catalog:
 
 ```bash
-# 删除技能目录
-rm -rf ~/.claude/skills/safe-junk-cleaner
-
-# 或项目级
-rm -rf /path/to/project/.claude/skills/safe-junk-cleaner
+python3 scripts/safe_junk_cleaner.py --list-supported-software
 ```
 
----
+Run a safe dry scan:
 
-## 需要帮助？
+```bash
+python3 scripts/safe_junk_cleaner.py scan --scope user --profile standard --include-trash
+```
 
-- 📖 查看 [README.md](README.md) 了解详细功能
-- 🐛 [提交 Issue](https://github.com/YOUR_USERNAME/safe-junk-cleaner/issues) 报告问题
-- 💬 [Discussions](https://github.com/YOUR_USERNAME/safe-junk-cleaner/discussions) 交流讨论
+## Notes
+
+- `standard` is the recommended default.
+- `aggressive` also removes rebuildable package-manager and developer caches.
+- Some system directories require administrator or root rights.
+- Some files may be skipped if they are locked by running applications.

@@ -7,6 +7,8 @@ description: Interactive cleanup of local computer junk files across Windows, ma
 
 Use this skill to run a strong but conservative disk cleanup. Prefer high-yield junk categories that the OS or apps can rebuild. Keep the user in control: scan first, show the estimated savings, then clean only after confirmation.
 
+This skill maintains a curated catalog covering 100+ common professional apps or app families across browsers, communication tools, developer tools, IDEs, creative tools, and knowledge-work apps. The scan logic is still whitelist-based: support means "look only at known cache, temp, updater, crash, shader, and log paths for that app."
+
 ## Interaction Contract
 
 Match the user's language.
@@ -59,6 +61,12 @@ Terminal-guided mode:
 python3 scripts/safe_junk_cleaner.py --interactive
 ```
 
+Show the current supported software catalog:
+
+```bash
+python3 scripts/safe_junk_cleaner.py --list-supported-software
+```
+
 ## Choosing Scope and Strength
 
 - `scope user`: clean the current user's junk only. Use this when the user wants a lower-risk cleanup or does not have admin rights.
@@ -67,6 +75,20 @@ python3 scripts/safe_junk_cleaner.py --interactive
 - `profile standard`: recommended. Clear temp, browser or app caches, crash dumps, thumbnails, logs, and optional recycle-bin or trash contents.
 - In `standard`, also clear curated desktop-app cache directories such as Electron caches, selected Chromium-derived app caches, updater leftovers, Adobe media caches, JetBrains caches, and app log folders that are safe to rebuild.
 - `profile aggressive`: everything in `standard` plus package-manager and developer caches that are safe to rebuild but may slow the next install or first app launch.
+
+## Software Coverage
+
+Treat app support as a curated whitelist, not a license to delete the whole app data folder.
+
+The catalog currently spans 100+ entries across:
+- browsers
+- chat, meeting, and collaboration apps
+- editors, IDEs, API tools, and container desktops
+- note-taking and productivity apps
+- JetBrains products and related IDE families
+- Adobe and creative-tool cache families
+
+When reporting to the user, mention the high-level families and call out the biggest matched apps by name. If needed, use `--list-supported-software` to inspect the current catalog.
 
 ## Reading Results
 

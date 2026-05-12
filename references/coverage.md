@@ -16,6 +16,8 @@ Beat shallow junk cleaners by covering more high-yield junk classes while stayin
 
 Do not use this skill to chase space by deleting user content or installed software.
 
+The cleaner now includes a curated software catalog covering 100+ common professional apps or app families. Coverage is still path-specific and cache-specific.
+
 ## Global Exclusions
 
 Never target these on speculation:
@@ -43,6 +45,7 @@ User-scope targets:
 - app-specific logs and updater leftovers for curated targets such as DingTalk, QQ, and Squirrel-based updaters
 - Adobe media caches and JetBrains `caches`, `tmp`, and `log`
 - UWP `TempState`, `AC\Temp`, and `AC\INetCache` folders
+- broad Electron-family coverage for collaboration, developer, and productivity apps through explicit app-name whitelists
 
 Machine-scope additions:
 - `%SystemRoot%\Temp`
@@ -108,6 +111,12 @@ When the user is vague, ask three short questions:
 3. include recycle bin or trash or not
 
 Then run a dry scan first. Summarize the estimated reclaimable space before you delete anything.
+
+If the user asks what software is covered, run:
+
+```bash
+python3 scripts/safe_junk_cleaner.py --list-supported-software
+```
 
 ## Risk Notes
 

@@ -152,6 +152,264 @@ ELECTRON_CACHE_SUBDIRS = (
     "GraphiteDawnCache",
 )
 
+WINDOWS_ELECTRON_APP_NAMES = (
+    "Basecamp 3",
+    "Beekeeper Studio",
+    "Bruno",
+    "Chatbox",
+    "Claude",
+    "ClickUp",
+    "Code",
+    "Code - Insiders",
+    "Cursor",
+    "Discord",
+    "DiscordCanary",
+    "DiscordPTB",
+    "Docker Desktop",
+    "draw.io",
+    "Figma",
+    "Flock",
+    "GitHub Desktop",
+    "GitKraken",
+    "Hoppscotch",
+    "Insomnia",
+    "Joplin",
+    "KeeWeb",
+    "Lark",
+    "Linear",
+    "Loom",
+    "Mattermost",
+    "Microsoft Teams",
+    "Miro",
+    "MQTTFX",
+    "MQTTX",
+    "Notion",
+    "Notion Calendar",
+    "Obsidian",
+    "OpenAI",
+    "PicGo",
+    "Podman Desktop",
+    "Postman",
+    "QQ",
+    "QQEX",
+    "Rocket.Chat",
+    "Rancher Desktop",
+    "Signal",
+    "Slack",
+    "Stoplight Studio",
+    "Teams",
+    "Todoist",
+    "Trae",
+    "Trello",
+    "VSCodium",
+    "wemeetapp",
+    "Windsurf",
+    "Wire",
+    "Xmind",
+)
+
+MACOS_ELECTRON_APP_NAMES = (
+    "Basecamp 3",
+    "Beekeeper Studio",
+    "Bruno",
+    "Chatbox",
+    "Claude",
+    "ClickUp",
+    "Code",
+    "Code - Insiders",
+    "Cursor",
+    "Discord",
+    "Docker Desktop",
+    "draw.io",
+    "Figma",
+    "GitHub Desktop",
+    "GitKraken",
+    "Hoppscotch",
+    "Insomnia",
+    "Joplin",
+    "KeeWeb",
+    "Linear",
+    "Loom",
+    "Mattermost",
+    "Miro",
+    "MQTTX",
+    "Notion",
+    "Notion Calendar",
+    "Obsidian",
+    "OpenAI",
+    "PicGo",
+    "Podman Desktop",
+    "Postman",
+    "Rocket.Chat",
+    "Rancher Desktop",
+    "Signal",
+    "Slack",
+    "Stoplight Studio",
+    "Teams",
+    "Todoist",
+    "Trae",
+    "Trello",
+    "VSCodium",
+    "Windsurf",
+    "Wire",
+    "Xmind",
+)
+
+LINUX_ELECTRON_APP_NAMES = (
+    "Beekeeper Studio",
+    "Bruno",
+    "Chatbox",
+    "Claude",
+    "Code",
+    "Code - Insiders",
+    "Cursor",
+    "discord",
+    "Docker Desktop",
+    "draw.io",
+    "Figma",
+    "GitHub Desktop",
+    "GitKraken",
+    "Hoppscotch",
+    "Insomnia",
+    "Joplin",
+    "KeeWeb",
+    "Linear",
+    "Mattermost",
+    "Miro",
+    "MQTTX",
+    "Notion",
+    "Obsidian",
+    "OpenAI",
+    "PicGo",
+    "Podman Desktop",
+    "Postman",
+    "Rocket.Chat",
+    "Rancher Desktop",
+    "Signal",
+    "Slack",
+    "Stoplight Studio",
+    "Teams",
+    "Trae",
+    "VSCodium",
+    "Windsurf",
+    "Wire",
+    "Xmind",
+)
+
+SOFTWARE_CATALOG = {
+    "Browsers": (
+        "Google Chrome",
+        "Google Chrome Beta",
+        "Google Chrome Canary",
+        "Microsoft Edge",
+        "Microsoft Edge Beta",
+        "Microsoft Edge Dev",
+        "Brave Browser",
+        "Mozilla Firefox",
+        "Chromium",
+        "Vivaldi",
+        "Opera",
+        "Opera GX",
+        "Quark Browser",
+        "RoxyBrowser",
+        "Sidekick",
+        "Wavebox",
+        "Yandex Browser",
+    ),
+    "Communication": (
+        "Slack",
+        "Microsoft Teams",
+        "Discord",
+        "Discord Canary",
+        "Discord PTB",
+        "QQ",
+        "QQEX",
+        "DingTalk",
+        "Lark",
+        "Feishu",
+        "Tencent Meeting",
+        "Mattermost",
+        "Rocket.Chat",
+        "Signal Desktop",
+        "Flock",
+        "Wire",
+        "WebCatalog",
+    ),
+    "Developer and Productivity": (
+        "Visual Studio Code",
+        "VS Code Insiders",
+        "VSCodium",
+        "Cursor",
+        "Trae",
+        "Windsurf",
+        "GitHub Desktop",
+        "GitKraken",
+        "Postman",
+        "Insomnia",
+        "Bruno",
+        "Hoppscotch",
+        "Docker Desktop",
+        "Podman Desktop",
+        "Rancher Desktop",
+        "MQTTX",
+        "MQTTFX",
+        "Beekeeper Studio",
+        "Stoplight Studio",
+        "KeeWeb",
+        "Figma",
+        "Notion",
+        "Notion Calendar",
+        "Obsidian",
+        "Joplin",
+        "Xmind",
+        "draw.io Desktop",
+        "Miro",
+        "Linear",
+        "Loom",
+        "Trello",
+        "Todoist",
+        "ClickUp",
+        "Basecamp 3",
+        "Chatbox",
+        "OpenAI Desktop",
+        "Claude Desktop",
+        "PicGo",
+        "Sublime Text",
+        "Visual Studio",
+    ),
+    "JetBrains and IDE Families": (
+        "JetBrains Toolbox",
+        "IntelliJ IDEA",
+        "PyCharm",
+        "WebStorm",
+        "CLion",
+        "GoLand",
+        "Rider",
+        "PhpStorm",
+        "RubyMine",
+        "DataGrip",
+        "DataSpell",
+        "Fleet",
+        "Aqua",
+        "Android Studio",
+        "RustRover",
+    ),
+    "Creative and Media": (
+        "Adobe Creative Cloud Desktop",
+        "Adobe Premiere Pro",
+        "Adobe After Effects",
+        "Adobe Audition",
+        "Adobe Media Encoder",
+        "Adobe Character Animator",
+        "Adobe Prelude",
+        "OBS Studio",
+        "Unity Hub",
+        "Unity Editor",
+        "Unreal Engine",
+        "Quark Cloud Drive Components",
+    ),
+}
+
 
 @dataclass(frozen=True)
 class Target:
@@ -680,8 +938,23 @@ def add_electron_app_targets(targets, seen, label_prefix, app_root):
                 f"{label_prefix} {partition_dir.name}",
                 partition_dir,
                 CHROMIUM_PROFILE_CACHE_SUBDIRS,
-                "app-cache",
+                            "app-cache",
             )
+
+
+def add_windows_electron_catalog_targets(targets, seen, home_name, roaming):
+    for app_name in WINDOWS_ELECTRON_APP_NAMES:
+        add_electron_app_targets(targets, seen, f"{home_name} {app_name}", roaming / app_name)
+
+
+def add_macos_electron_catalog_targets(targets, seen, home_name, app_support):
+    for app_name in MACOS_ELECTRON_APP_NAMES:
+        add_electron_app_targets(targets, seen, f"{home_name} {app_name}", app_support / app_name)
+
+
+def add_linux_electron_catalog_targets(targets, seen, home_name, config):
+    for app_name in LINUX_ELECTRON_APP_NAMES:
+        add_electron_app_targets(targets, seen, f"{home_name} {app_name}", config / app_name)
 
 
 def build_windows_targets(scope, profile, include_trash, include_package_caches):
@@ -748,26 +1021,11 @@ def build_windows_targets(scope, profile, include_trash, include_package_caches)
                 add_target(targets, seen, f"{home.name} Firefox thumbnails", profile_dir / "thumbnails", "purge_dir", "thumbnails")
 
         electron_roots = (
-            roaming / "Code",
-            roaming / "Code - Insiders",
-            roaming / "Cursor",
-            roaming / "Discord",
-            roaming / "Docker Desktop",
-            roaming / "Figma",
-            roaming / "GitHub Desktop",
-            roaming / "Notion",
-            roaming / "Obsidian",
-            roaming / "Postman",
-            roaming / "QQ",
-            roaming / "QQEX",
-            roaming / "Slack",
-            roaming / "Teams",
-            roaming / "Trae",
             roaming / "wemeetapp",
-            roaming / "Xmind",
         )
         for app_root in electron_roots:
             add_electron_app_targets(targets, seen, f"{home.name} {app_root.name}", app_root)
+        add_windows_electron_catalog_targets(targets, seen, home.name, roaming)
 
         for idea_root in expand_existing_dirs(local / "JetBrains" / "*"):
             add_target(targets, seen, f"{home.name} {idea_root.name} caches", idea_root / "caches", "purge_dir", "app-cache")
@@ -846,20 +1104,7 @@ def build_macos_targets(scope, profile, include_trash, include_package_caches):
         add_target(targets, seen, f"{home.name} caches", library / "Caches", "purge_dir", "app-cache")
         add_target(targets, seen, f"{home.name} logs", library / "Logs", "purge_dir", "logs")
         add_target(targets, seen, f"{home.name} crash reporter", library / "Application Support" / "CrashReporter", "purge_dir", "crash")
-        for app_root in (
-            app_support / "Code",
-            app_support / "Code - Insiders",
-            app_support / "Cursor",
-            app_support / "Discord",
-            app_support / "Figma",
-            app_support / "GitHub Desktop",
-            app_support / "Notion",
-            app_support / "Obsidian",
-            app_support / "Postman",
-            app_support / "Slack",
-            app_support / "Trae",
-        ):
-            add_electron_app_targets(targets, seen, f"{home.name} {app_root.name}", app_root)
+        add_macos_electron_catalog_targets(targets, seen, home.name, app_support)
         if include_trash:
             add_target(targets, seen, f"{home.name} trash", home / ".Trash", "purge_dir", "trash")
         if profile == "aggressive":
@@ -911,17 +1156,7 @@ def build_linux_targets(scope, profile, include_trash, include_package_caches):
         }.items():
             if user_data_root.exists():
                 add_chromium_user_data_targets(targets, seen, f"{home.name} {browser_name}", user_data_root)
-        for app_root in (
-            config / "Code",
-            config / "Code - Insiders",
-            config / "Cursor",
-            config / "discord",
-            config / "obsidian",
-            config / "Postman",
-            config / "Slack",
-            config / "Trae",
-        ):
-            add_electron_app_targets(targets, seen, f"{home.name} {app_root.name}", app_root)
+        add_linux_electron_catalog_targets(targets, seen, home.name, config)
         if include_trash:
             add_target(targets, seen, f"{home.name} trash", home / ".local" / "share" / "Trash" / "files", "purge_dir", "trash")
         if include_package_caches:
@@ -1093,6 +1328,31 @@ def print_human_report(title, report):
             print(f"  - {message}")
 
 
+def build_supported_software_summary():
+    groups = []
+    total = 0
+    for group_name, software_names in SOFTWARE_CATALOG.items():
+        deduped = sorted(dict.fromkeys(software_names))
+        total += len(deduped)
+        groups.append(
+            {
+                "group": group_name,
+                "count": len(deduped),
+                "software": deduped,
+            }
+        )
+    return {"total_supported_software": total, "groups": groups}
+
+
+def print_supported_software(summary):
+    print(f"Supported software catalog: {summary['total_supported_software']} entries")
+    for group in summary["groups"]:
+        print(f"")
+        print(f"{group['group']} ({group['count']}):")
+        for name in group["software"]:
+            print(f"  - {name}")
+
+
 def add_bool_flag(parser, name, help_text):
     parser.add_argument(
         f"--{name}",
@@ -1173,6 +1433,7 @@ def build_parser():
     parser.add_argument("--execute", action="store_true", help="required for non-interactive cleanup")
     parser.add_argument("--interactive", action="store_true", help="ask for scope, profile, and confirmation")
     parser.add_argument("--json", action="store_true", help="emit JSON instead of human-readable text")
+    parser.add_argument("--list-supported-software", action="store_true", help="show the curated software catalog and exit")
     return parser
 
 
@@ -1180,6 +1441,14 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
     os_name = detect_os()
+
+    if args.list_supported_software:
+        summary = build_supported_software_summary()
+        if args.json:
+            print(json.dumps(summary, indent=2))
+        else:
+            print_supported_software(summary)
+        return 0
 
     if args.interactive:
         args = resolve_interactive_args(args)
