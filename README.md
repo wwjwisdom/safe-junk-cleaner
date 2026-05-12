@@ -187,7 +187,7 @@ python3 scripts/safe_junk_cleaner.py --interactive
 This repository is designed to work with multiple mainstream coding agents:
 
 - Codex: native skill installation
-- Claude Code: native skill installation
+- Claude Code: native skill installation or slash command wrapper
 - Gemini CLI: custom command wrapper
 - OpenCode: custom command wrapper
 
@@ -208,6 +208,8 @@ safe-junk-cleaner/
 |- scripts/
 |  `- safe_junk_cleaner.py
 `- integrations/
+   |- claude-code/
+   |  `- safe-junk-cleaner.md
    |- gemini-cli/
    |  `- safe-junk-cleaner.toml
    `- opencode/

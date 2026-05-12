@@ -103,7 +103,7 @@ If system-only categories are skipped, tell the user exactly which ones need ele
 
 ## Platform Notes
 
-Read [references/coverage.md](C:\Users\cmp\.codex\skills\safe-junk-cleaner\references\coverage.md) when you need the full target map or need to explain what the script does not touch.
+Read [references/coverage.md](references/coverage.md) when you need the full target map or need to explain what the script does not touch.
 
 Highlights:
 - Windows: temp folders, WER, crash dumps, browser caches, shader caches, thumbnail caches, recycle bins on each drive, and curated app caches for Electron apps, Chromium-derived apps, Adobe media caches, JetBrains caches, DingTalk logs, and QQ cache partitions.

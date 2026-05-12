@@ -7,7 +7,7 @@ This repository can be used from several mainstream AI agents.
 | Agent | Integration style | Recommended path |
 | --- | --- | --- |
 | Codex | Native skill | `~/.codex/skills/safe-junk-cleaner` |
-| Claude Code | Native skill | `~/.claude/skills/safe-junk-cleaner` |
+| Claude Code | Native skill or custom slash command | `~/.claude/skills/safe-junk-cleaner` |
 | Gemini CLI | Custom command | `~/.gemini/commands/safe-junk-cleaner.toml` |
 | OpenCode | Custom command | `.opencode/commands/safe-junk-cleaner.md` |
 
@@ -36,7 +36,12 @@ Use $safe-junk-cleaner to clean browser and app caches in standard mode.
 
 ## 2. Claude Code
 
-Claude Code supports reusable skills under `~/.claude/skills/<skill-name>/SKILL.md` and also project-level skills under `.claude/skills/`.
+Claude Code supports both:
+
+- native skills in `~/.claude/skills/` or `.claude/skills/`
+- custom slash commands in `~/.claude/commands/` or `.claude/commands/`
+
+### Option A: Install as a native skill
 
 Global install:
 
@@ -51,7 +56,7 @@ mkdir -p .claude/skills
 git clone https://github.com/YOUR_GITHUB_USERNAME/safe-junk-cleaner.git .claude/skills/safe-junk-cleaner
 ```
 
-Then ask Claude naturally, or mention the skill explicitly:
+Then use it naturally in chat, or mention the skill explicitly:
 
 ```text
 $safe-junk-cleaner
@@ -62,6 +67,44 @@ Examples:
 ```text
 Use $safe-junk-cleaner to scan the whole machine in standard mode.
 Use $safe-junk-cleaner to clean browser caches and app caches after a dry run.
+```
+
+### Option B: Install as a slash command
+
+This repository also ships a command template at:
+
+```text
+integrations/claude-code/safe-junk-cleaner.md
+```
+
+1. Clone this repository somewhere stable:
+
+```bash
+git clone https://github.com/YOUR_GITHUB_USERNAME/safe-junk-cleaner.git ~/ai-skills/safe-junk-cleaner
+```
+
+2. Copy the command template:
+
+macOS or Linux:
+
+```bash
+mkdir -p ~/.claude/commands
+cp ~/ai-skills/safe-junk-cleaner/integrations/claude-code/safe-junk-cleaner.md ~/.claude/commands/
+```
+
+Windows PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.claude\commands" | Out-Null
+Copy-Item "$env:USERPROFILE\ai-skills\safe-junk-cleaner\integrations\claude-code\safe-junk-cleaner.md" "$env:USERPROFILE\.claude\commands\"
+```
+
+3. Edit the copied file and replace `REPO_PATH` with the real repository path.
+
+4. Use the command:
+
+```text
+/safe-junk-cleaner scan the whole machine in standard mode
 ```
 
 ## 3. Gemini CLI
