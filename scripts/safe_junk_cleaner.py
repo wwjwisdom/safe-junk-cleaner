@@ -1,0 +1,1245 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import json
+import os
+import platform
+import shutil
+import string
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+WINDOWS_USER_EXCLUDES = {
+    "all users",
+    "default",
+    "default user",
+    "defaultuser0",
+    "public",
+}
+
+LINUX_SKIP_FS = {
+    "autofs",
+    "bpf",
+    "cgroup",
+    "cgroup2",
+    "configfs",
+    "debugfs",
+    "devpts",
+    "devtmpfs",
+    "fusectl",
+    "hugetlbfs",
+    "mqueue",
+    "nsfs",
+    "overlay",
+    "proc",
+    "pstore",
+    "securityfs",
+    "selinuxfs",
+    "squashfs",
+    "sysfs",
+    "tmpfs",
+    "tracefs",
+}
+
+PROTECTED_TEMP_EXTENSIONS = {
+    ".7z",
+    ".avi",
+    ".cer",
+    ".cfg",
+    ".conf",
+    ".csv",
+    ".db",
+    ".doc",
+    ".docx",
+    ".eml",
+    ".epub",
+    ".flac",
+    ".gif",
+    ".gz",
+    ".heic",
+    ".ini",
+    ".iso",
+    ".jpeg",
+    ".jpg",
+    ".json",
+    ".key",
+    ".kdbx",
+    ".m4a",
+    ".mkv",
+    ".md",
+    ".mov",
+    ".mp3",
+    ".mp4",
+    ".odp",
+    ".ods",
+    ".odt",
+    ".opus",
+    ".pages",
+    ".pdf",
+    ".pem",
+    ".png",
+    ".ppt",
+    ".pptx",
+    ".psd",
+    ".rar",
+    ".rtf",
+    ".sqlite",
+    ".sqlite3",
+    ".tar",
+    ".txt",
+    ".wav",
+    ".webm",
+    ".xls",
+    ".xlsx",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".zip",
+}
+
+PROFILE_TEMP_AGES = {
+    "conservative": 72,
+    "standard": 24,
+    "aggressive": 6,
+}
+
+CATEGORY_TITLES = {
+    "temp": "Temporary Files",
+    "browser-cache": "Browser Caches",
+    "app-cache": "App Caches",
+    "shader-cache": "Shader Caches",
+    "crash": "Crash Dumps and Reports",
+    "thumbnails": "Thumbnails and Icons",
+    "logs": "Logs",
+    "trash": "Recycle Bin or Trash",
+    "package-cache": "Package and Developer Caches",
+}
+
+CHROMIUM_PROFILE_CACHE_SUBDIRS = (
+    "Cache",
+    "Code Cache",
+    "CodeCache",
+    "GPUCache",
+    "GrShaderCache",
+    "ShaderCache",
+    "DawnGraphiteCache",
+    "DawnWebGPUCache",
+    "GraphiteDawnCache",
+)
+
+CHROMIUM_ROOT_CACHE_SUBDIRS = (
+    "Code Cache",
+    "CodeCache",
+    "component_crx_cache",
+    "GraphiteDawnCache",
+    "GrShaderCache",
+    "ShaderCache",
+    "DawnGraphiteCache",
+    "DawnWebGPUCache",
+)
+
+ELECTRON_CACHE_SUBDIRS = (
+    "Cache",
+    "Code Cache",
+    "GPUCache",
+    "CachedData",
+    "DawnGraphiteCache",
+    "DawnWebGPUCache",
+    "GraphiteDawnCache",
+)
+
+
+@dataclass(frozen=True)
+class Target:
+    label: str
+    path: Path
+    kind: str
+    category: str
+    min_age_hours: int = 0
+    patterns: tuple[str, ...] = ()
+
+
+def detect_os():
+    system = platform.system().lower()
+    if system.startswith("win"):
+        return "windows"
+    if system == "darwin":
+        return "darwin"
+    return "linux"
+
+
+def format_bytes(size):
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    value = float(size)
+    for unit in units:
+        if value < 1024.0 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+    return f"{int(size)} B"
+
+
+def now_ts():
+    return time.time()
+
+
+def append_error(errors, message, limit=20):
+    if len(errors) < limit:
+        errors.append(message)
+
+
+def is_symlink_like(path):
+    try:
+        return path.is_symlink()
+    except OSError:
+        return True
+
+
+def is_old_enough(path, min_age_hours):
+    if min_age_hours <= 0:
+        return True
+    try:
+        age_seconds = now_ts() - os.lstat(path).st_mtime
+        return age_seconds >= min_age_hours * 3600
+    except OSError:
+        return False
+
+
+def is_protected_temp_file(path):
+    name = path.name.lower()
+    if name in {"desktop.ini", "ntuser.dat"}:
+        return True
+    return path.suffix.lower() in PROTECTED_TEMP_EXTENSIONS
+
+
+def clear_readonly(path):
+    try:
+        mode = os.lstat(path).st_mode
+        os.chmod(path, mode | 0o200)
+    except Exception:
+        return
+
+
+def rmtree_onerror(func, target, exc_info):
+    del exc_info
+    try:
+        clear_readonly(Path(target))
+        func(target)
+    except Exception:
+        return
+
+
+def measure_path(path, errors):
+    try:
+        if is_symlink_like(path):
+            return 0, 0
+        if path.is_file():
+            return os.lstat(path).st_size, 1
+        if not path.is_dir():
+            return 0, 0
+    except OSError as exc:
+        append_error(errors, f"measure failed for {path}: {exc}")
+        return 0, 0
+
+    total_size = 0
+    total_items = 0
+    stack = [path]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                            continue
+                        if entry.is_file(follow_symlinks=False):
+                            stat_result = entry.stat(follow_symlinks=False)
+                            total_size += stat_result.st_size
+                            total_items += 1
+                    except OSError as exc:
+                        append_error(errors, f"measure failed for {entry.path}: {exc}")
+        except OSError as exc:
+            append_error(errors, f"measure failed for {current}: {exc}")
+    return total_size, total_items
+
+
+def remove_file(path, errors):
+    clear_readonly(path)
+    try:
+        size = os.lstat(path).st_size
+    except OSError:
+        size = 0
+    try:
+        path.unlink()
+        return size, 1, 0
+    except OSError as exc:
+        append_error(errors, f"delete failed for {path}: {exc}")
+        return 0, 0, 1
+
+
+def remove_tree(path, errors):
+    size, items = measure_path(path, errors)
+    try:
+        shutil.rmtree(path, onerror=rmtree_onerror)
+        return size, items, 0
+    except OSError as exc:
+        append_error(errors, f"delete failed for {path}: {exc}")
+        return 0, 0, 1
+
+
+def remove_entry(path, errors):
+    try:
+        if is_symlink_like(path):
+            clear_readonly(path)
+            path.unlink()
+            return 0, 1, 0
+        if path.is_file():
+            return remove_file(path, errors)
+        if path.is_dir():
+            return remove_tree(path, errors)
+    except OSError as exc:
+        append_error(errors, f"delete failed for {path}: {exc}")
+        return 0, 0, 1
+    return 0, 0, 0
+
+
+def summarize_purge_dir(root, errors):
+    if not root.exists() or not root.is_dir():
+        return 0, 0
+    total_size = 0
+    total_items = 0
+    try:
+        children = list(root.iterdir())
+    except OSError as exc:
+        append_error(errors, f"scan failed for {root}: {exc}")
+        return 0, 0
+    for child in children:
+        size, items = measure_path(child, errors)
+        total_size += size
+        total_items += items
+    return total_size, total_items
+
+
+def clean_purge_dir(root, errors):
+    if not root.exists() or not root.is_dir():
+        return 0, 0, 0
+    total_size = 0
+    total_items = 0
+    skipped = 0
+    try:
+        children = list(root.iterdir())
+    except OSError as exc:
+        append_error(errors, f"scan failed for {root}: {exc}")
+        return 0, 0, 1
+    for child in children:
+        size, items, failures = remove_entry(child, errors)
+        total_size += size
+        total_items += items
+        skipped += failures
+    return total_size, total_items, skipped
+
+
+def summarize_temp_dir(root, min_age_hours, errors):
+    if not root.exists() or not root.is_dir():
+        return 0, 0
+    total_size = 0
+    total_items = 0
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    entry_path = Path(entry.path)
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry_path)
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        if not is_old_enough(entry_path, min_age_hours):
+                            continue
+                        if is_protected_temp_file(entry_path):
+                            continue
+                        total_size += entry.stat(follow_symlinks=False).st_size
+                        total_items += 1
+                    except OSError as exc:
+                        append_error(errors, f"scan failed for {entry.path}: {exc}")
+        except OSError as exc:
+            append_error(errors, f"scan failed for {current}: {exc}")
+    return total_size, total_items
+
+
+def clean_temp_dir(root, min_age_hours, errors):
+    if not root.exists() or not root.is_dir():
+        return 0, 0, 0
+    total_size = 0
+    total_items = 0
+    skipped = 0
+    stack = [root]
+    seen_dirs = []
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    entry_path = Path(entry.path)
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry_path)
+                            seen_dirs.append(entry_path)
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        if not is_old_enough(entry_path, min_age_hours):
+                            continue
+                        if is_protected_temp_file(entry_path):
+                            continue
+                        size, items, failures = remove_file(entry_path, errors)
+                        total_size += size
+                        total_items += items
+                        skipped += failures
+                    except OSError as exc:
+                        append_error(errors, f"delete failed for {entry.path}: {exc}")
+                        skipped += 1
+        except OSError as exc:
+            append_error(errors, f"scan failed for {current}: {exc}")
+            skipped += 1
+
+    for directory in sorted(seen_dirs, key=lambda item: len(item.parts), reverse=True):
+        if not is_old_enough(directory, min_age_hours):
+            continue
+        try:
+            directory.rmdir()
+        except OSError:
+            continue
+    return total_size, total_items, skipped
+
+
+def summarize_match_files(root, patterns, min_age_hours, errors):
+    if not root.exists() or not root.is_dir():
+        return 0, 0
+    total_size = 0
+    total_items = 0
+    for pattern in patterns:
+        try:
+            for item in root.glob(pattern):
+                if not item.is_file():
+                    continue
+                if not is_old_enough(item, min_age_hours):
+                    continue
+                total_size += item.stat(follow_symlinks=False).st_size
+                total_items += 1
+        except OSError as exc:
+            append_error(errors, f"scan failed for {root}: {exc}")
+    return total_size, total_items
+
+
+def clean_match_files(root, patterns, min_age_hours, errors):
+    if not root.exists() or not root.is_dir():
+        return 0, 0, 0
+    total_size = 0
+    total_items = 0
+    skipped = 0
+    for pattern in patterns:
+        try:
+            for item in root.glob(pattern):
+                if not item.is_file():
+                    continue
+                if not is_old_enough(item, min_age_hours):
+                    continue
+                size, items, failures = remove_file(item, errors)
+                total_size += size
+                total_items += items
+                skipped += failures
+        except OSError as exc:
+            append_error(errors, f"delete failed for {root}: {exc}")
+            skipped += 1
+    return total_size, total_items, skipped
+
+
+def summarize_single_file(path, errors):
+    if not path.exists() or not path.is_file():
+        return 0, 0
+    try:
+        return os.lstat(path).st_size, 1
+    except OSError as exc:
+        append_error(errors, f"scan failed for {path}: {exc}")
+        return 0, 0
+
+
+def clean_single_file(path, errors):
+    if not path.exists() or not path.is_file():
+        return 0, 0, 0
+    return remove_file(path, errors)
+
+
+def normalize_key(target):
+    path_text = str(target.path)
+    if detect_os() == "windows":
+        path_text = path_text.lower()
+    return (target.kind, target.category, path_text, target.min_age_hours, target.patterns)
+
+
+def add_target(targets, seen, label, path, kind, category, min_age_hours=0, patterns=()):
+    target = Target(
+        label=label,
+        path=Path(path),
+        kind=kind,
+        category=category,
+        min_age_hours=min_age_hours,
+        patterns=tuple(patterns),
+    )
+    key = normalize_key(target)
+    if key in seen:
+        return
+    seen.add(key)
+    targets.append(target)
+
+
+def iter_windows_volumes():
+    volumes = []
+    try:
+        mask = ctypes.windll.kernel32.GetLogicalDrives()
+        drive_type = ctypes.windll.kernel32.GetDriveTypeW
+    except Exception:
+        return [Path(os.environ.get("SystemDrive", "C:\\"))]
+    for letter in string.ascii_uppercase:
+        if mask & 1:
+            drive = f"{letter}:\\"
+            dtype = drive_type(ctypes.c_wchar_p(drive))
+            if dtype in (2, 3, 6):
+                volumes.append(Path(drive))
+        mask >>= 1
+    return volumes or [Path(os.environ.get("SystemDrive", "C:\\"))]
+
+
+def iter_linux_volumes():
+    volumes = []
+    mounts_file = Path("/proc/self/mounts")
+    if mounts_file.exists():
+        try:
+            for line in mounts_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                device, mount_point, fs_type = parts[:3]
+                mount_point = mount_point.replace("\\040", " ")
+                if fs_type in LINUX_SKIP_FS:
+                    continue
+                if device.startswith("/dev/") or mount_point == "/" or mount_point.startswith(("/mnt/", "/media/", "/run/media/")):
+                    volumes.append(Path(mount_point))
+        except OSError:
+            pass
+    if not volumes:
+        volumes = [Path("/")]
+        for root in (Path("/mnt"), Path("/media"), Path("/run/media")):
+            if not root.exists():
+                continue
+            for child in root.iterdir():
+                if child.is_dir():
+                    volumes.append(child)
+    return dedupe_paths(volumes)
+
+
+def iter_macos_volumes():
+    volumes = [Path("/")]
+    vol_root = Path("/Volumes")
+    if vol_root.exists():
+        for child in vol_root.iterdir():
+            if child.is_dir():
+                volumes.append(child)
+    return dedupe_paths(volumes)
+
+
+def dedupe_paths(paths):
+    seen = set()
+    result = []
+    for path in paths:
+        text = str(path)
+        key = text.lower() if detect_os() == "windows" else text
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def iter_user_homes(os_name, scope):
+    homes = [Path.home()]
+    if scope != "machine":
+        return dedupe_paths(homes)
+
+    if os_name == "windows":
+        users_root = Path(os.environ.get("SystemDrive", "C:\\")) / "Users"
+        if users_root.exists():
+            for child in users_root.iterdir():
+                if not child.is_dir():
+                    continue
+                if child.name.lower() in WINDOWS_USER_EXCLUDES:
+                    continue
+                homes.append(child)
+    else:
+        for base in (Path("/Users"), Path("/home")):
+            if not base.exists():
+                continue
+            for child in base.iterdir():
+                if child.is_dir():
+                    homes.append(child)
+        root_home = Path("/root")
+        if root_home.exists():
+            homes.append(root_home)
+    return dedupe_paths(homes)
+
+
+def expand_existing_dirs(pattern):
+    parent = pattern.parent
+    name = pattern.name
+    if not parent.exists():
+        return []
+    try:
+        return [item for item in parent.glob(name) if item.exists() and item.is_dir()]
+    except OSError:
+        return []
+
+
+def add_subdir_targets(targets, seen, label_prefix, root, subdirs, category):
+    for subdir in subdirs:
+        add_target(
+            targets,
+            seen,
+            f"{label_prefix} {str(subdir).replace('/', ' ')}",
+            root / Path(subdir),
+            "purge_dir",
+            category,
+        )
+
+
+def add_chromium_user_data_targets(targets, seen, label_prefix, user_data_root):
+    add_subdir_targets(targets, seen, label_prefix, user_data_root, CHROMIUM_ROOT_CACHE_SUBDIRS, "browser-cache")
+    add_target(
+        targets,
+        seen,
+        f"{label_prefix} Crashpad reports",
+        user_data_root / "Crashpad" / "reports",
+        "purge_dir",
+        "crash",
+    )
+    for profile_dir in expand_existing_dirs(user_data_root / "*"):
+        add_subdir_targets(
+            targets,
+            seen,
+            f"{label_prefix} {profile_dir.name}",
+            profile_dir,
+            CHROMIUM_PROFILE_CACHE_SUBDIRS,
+            "browser-cache",
+        )
+
+    partitions_root = user_data_root / "Partitions"
+    if partitions_root.exists():
+        for partition_dir in expand_existing_dirs(partitions_root / "*"):
+            add_subdir_targets(
+                targets,
+                seen,
+                f"{label_prefix} {partition_dir.name}",
+                partition_dir,
+                CHROMIUM_PROFILE_CACHE_SUBDIRS,
+                "browser-cache",
+            )
+
+
+def add_electron_app_targets(targets, seen, label_prefix, app_root):
+    add_subdir_targets(targets, seen, label_prefix, app_root, ELECTRON_CACHE_SUBDIRS, "app-cache")
+    add_target(
+        targets,
+        seen,
+        f"{label_prefix} Crashpad reports",
+        app_root / "Crashpad" / "reports",
+        "purge_dir",
+        "crash",
+    )
+
+    partitions_root = app_root / "Partitions"
+    if partitions_root.exists():
+        for partition_dir in expand_existing_dirs(partitions_root / "*"):
+            add_subdir_targets(
+                targets,
+                seen,
+                f"{label_prefix} {partition_dir.name}",
+                partition_dir,
+                CHROMIUM_PROFILE_CACHE_SUBDIRS,
+                "app-cache",
+            )
+
+
+def build_windows_targets(scope, profile, include_trash, include_package_caches):
+    targets = []
+    seen = set()
+    homes = iter_user_homes("windows", scope)
+    volumes = iter_windows_volumes()
+    temp_age = PROFILE_TEMP_AGES[profile]
+
+    for home in homes:
+        local = home / "AppData" / "Local"
+        roaming = home / "AppData" / "Roaming"
+
+        add_target(targets, seen, f"{home.name} temp", local / "Temp", "temp_dir", "temp", temp_age)
+        add_target(targets, seen, f"{home.name} local low temp", home / "AppData" / "LocalLow" / "Temp", "temp_dir", "temp", temp_age)
+        add_target(targets, seen, f"{home.name} SquirrelTemp", local / "SquirrelTemp", "purge_dir", "temp")
+        add_target(targets, seen, f"{home.name} inet cache", local / "Microsoft" / "Windows" / "INetCache", "purge_dir", "browser-cache")
+        add_target(targets, seen, f"{home.name} crash dumps", local / "CrashDumps", "purge_dir", "crash")
+        add_target(targets, seen, f"{home.name} CrashRpt", local / "CrashRpt", "purge_dir", "crash")
+        add_target(targets, seen, f"{home.name} Direct3D cache", local / "D3DSCache", "purge_dir", "shader-cache")
+        add_target(targets, seen, f"{home.name} explorer caches", local / "Microsoft" / "Windows" / "Explorer", "match_files", "thumbnails", 0, ("thumbcache_*.db", "iconcache_*.db"))
+
+        for adobe_root in (
+            local / "Adobe" / "Common",
+            roaming / "Adobe" / "Common",
+        ):
+            add_subdir_targets(
+                targets,
+                seen,
+                f"{home.name} Adobe",
+                adobe_root,
+                ("Media Cache", "Media Cache Files", "Peak Files"),
+                "app-cache",
+            )
+
+        for shader_dir in (
+            local / "NVIDIA" / "DXCache",
+            local / "NVIDIA" / "GLCache",
+            local / "NVIDIA" / "NvCache",
+            local / "AMD" / "DxCache",
+            local / "AMD" / "DxcCache",
+        ):
+            add_target(targets, seen, f"{home.name} {shader_dir.name}", shader_dir, "purge_dir", "shader-cache")
+
+        chromium_roots = {
+            "Chrome": local / "Google" / "Chrome" / "User Data",
+            "Chrome Beta": local / "Google" / "Chrome Beta" / "User Data",
+            "Edge": local / "Microsoft" / "Edge" / "User Data",
+            "Brave": local / "BraveSoftware" / "Brave-Browser" / "User Data",
+            "Vivaldi": local / "Vivaldi" / "User Data",
+            "Opera": roaming / "Opera Software" / "Opera Stable",
+            "Opera GX": roaming / "Opera Software" / "Opera GX Stable",
+            "Quark": local / "Quark" / "User Data",
+            "RoxyBrowser": roaming / "RoxyBrowser" / "User Data",
+        }
+        for browser_name, user_data_root in chromium_roots.items():
+            if user_data_root.exists():
+                add_chromium_user_data_targets(targets, seen, f"{home.name} {browser_name}", user_data_root)
+
+        firefox_profiles = local / "Mozilla" / "Firefox" / "Profiles"
+        if firefox_profiles.exists():
+            for profile_dir in expand_existing_dirs(firefox_profiles / "*"):
+                add_target(targets, seen, f"{home.name} Firefox cache", profile_dir / "cache2", "purge_dir", "browser-cache")
+                add_target(targets, seen, f"{home.name} Firefox thumbnails", profile_dir / "thumbnails", "purge_dir", "thumbnails")
+
+        electron_roots = (
+            roaming / "Code",
+            roaming / "Code - Insiders",
+            roaming / "Cursor",
+            roaming / "Discord",
+            roaming / "Docker Desktop",
+            roaming / "Figma",
+            roaming / "GitHub Desktop",
+            roaming / "Notion",
+            roaming / "Obsidian",
+            roaming / "Postman",
+            roaming / "QQ",
+            roaming / "QQEX",
+            roaming / "Slack",
+            roaming / "Teams",
+            roaming / "Trae",
+            roaming / "wemeetapp",
+            roaming / "Xmind",
+        )
+        for app_root in electron_roots:
+            add_electron_app_targets(targets, seen, f"{home.name} {app_root.name}", app_root)
+
+        for idea_root in expand_existing_dirs(local / "JetBrains" / "*"):
+            add_target(targets, seen, f"{home.name} {idea_root.name} caches", idea_root / "caches", "purge_dir", "app-cache")
+            add_target(targets, seen, f"{home.name} {idea_root.name} tmp", idea_root / "tmp", "purge_dir", "temp")
+            add_target(targets, seen, f"{home.name} {idea_root.name} log", idea_root / "log", "purge_dir", "logs")
+
+        add_subdir_targets(
+            targets,
+            seen,
+            f"{home.name} DingTalk",
+            roaming / "DingTalk",
+            ("log", "holmeslogs", "updaterlogs"),
+            "logs",
+        )
+        add_subdir_targets(
+            targets,
+            seen,
+            f"{home.name} QQ",
+            roaming / "QQ",
+            ("log",),
+            "logs",
+        )
+
+        packages_root = local / "Packages"
+        if packages_root.exists():
+            for temp_state in expand_existing_dirs(packages_root / "*" / "TempState"):
+                add_target(targets, seen, f"{home.name} {temp_state.parent.name} TempState", temp_state, "purge_dir", "app-cache")
+            for ac_temp in expand_existing_dirs(packages_root / "*" / "AC" / "Temp"):
+                add_target(targets, seen, f"{home.name} {ac_temp.parent.parent.name} AC Temp", ac_temp, "purge_dir", "app-cache")
+            for ac_inet_cache in expand_existing_dirs(packages_root / "*" / "AC" / "INetCache"):
+                add_target(targets, seen, f"{home.name} {ac_inet_cache.parent.parent.name} AC INetCache", ac_inet_cache, "purge_dir", "app-cache")
+
+        if include_package_caches:
+            for package_cache in (
+                local / "pip" / "Cache",
+                local / "uv" / "cache",
+                local / "npm-cache" / "_cacache",
+                local / "Yarn" / "Cache",
+                home / ".cargo" / "registry" / "cache",
+                home / ".cargo" / "git" / "db",
+                local / "pnpm-store",
+                home / ".pnpm-store",
+            ):
+                add_target(targets, seen, f"{home.name} {package_cache.name}", package_cache, "purge_dir", "package-cache")
+
+    if scope == "machine":
+        windir = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        program_data = Path(os.environ.get("ProgramData", r"C:\ProgramData"))
+        add_target(targets, seen, "Windows temp", windir / "Temp", "temp_dir", "temp", temp_age)
+        add_target(targets, seen, "WER archive", program_data / "Microsoft" / "Windows" / "WER" / "ReportArchive", "purge_dir", "crash")
+        add_target(targets, seen, "WER queue", program_data / "Microsoft" / "Windows" / "WER" / "ReportQueue", "purge_dir", "crash")
+        add_target(targets, seen, "WER temp", program_data / "Microsoft" / "Windows" / "WER" / "Temp", "purge_dir", "crash")
+        add_target(targets, seen, "Windows minidumps", windir / "Minidump", "purge_dir", "crash")
+        add_target(targets, seen, "Windows memory dump", windir / "MEMORY.DMP", "single_file", "crash")
+        if profile == "aggressive":
+            add_target(targets, seen, "CBS logs", windir / "Logs" / "CBS", "match_files", "logs", 168, ("*.log",))
+            add_target(targets, seen, "DISM logs", windir / "Logs" / "DISM", "match_files", "logs", 168, ("*.log",))
+
+    if include_trash:
+        for volume in volumes:
+            add_target(targets, seen, f"{volume} recycle bin", volume / "$Recycle.Bin", "purge_dir", "trash")
+
+    return targets, volumes
+
+
+def build_macos_targets(scope, profile, include_trash, include_package_caches):
+    targets = []
+    seen = set()
+    homes = iter_user_homes("darwin", scope)
+    volumes = iter_macos_volumes()
+    temp_age = PROFILE_TEMP_AGES[profile]
+
+    for home in homes:
+        library = home / "Library"
+        app_support = library / "Application Support"
+        add_target(targets, seen, f"{home.name} caches", library / "Caches", "purge_dir", "app-cache")
+        add_target(targets, seen, f"{home.name} logs", library / "Logs", "purge_dir", "logs")
+        add_target(targets, seen, f"{home.name} crash reporter", library / "Application Support" / "CrashReporter", "purge_dir", "crash")
+        for app_root in (
+            app_support / "Code",
+            app_support / "Code - Insiders",
+            app_support / "Cursor",
+            app_support / "Discord",
+            app_support / "Figma",
+            app_support / "GitHub Desktop",
+            app_support / "Notion",
+            app_support / "Obsidian",
+            app_support / "Postman",
+            app_support / "Slack",
+            app_support / "Trae",
+        ):
+            add_electron_app_targets(targets, seen, f"{home.name} {app_root.name}", app_root)
+        if include_trash:
+            add_target(targets, seen, f"{home.name} trash", home / ".Trash", "purge_dir", "trash")
+        if profile == "aggressive":
+            add_target(targets, seen, f"{home.name} Xcode DerivedData", library / "Developer" / "Xcode" / "DerivedData", "purge_dir", "package-cache")
+        if include_package_caches:
+            for package_cache in (
+                home / ".npm" / "_cacache",
+                home / ".pnpm-store",
+                home / ".cargo" / "registry" / "cache",
+                home / ".cargo" / "git" / "db",
+                home / ".cache" / "uv",
+            ):
+                add_target(targets, seen, f"{home.name} {package_cache.name}", package_cache, "purge_dir", "package-cache")
+
+    if scope == "machine":
+        add_target(targets, seen, "system tmp", Path("/tmp"), "temp_dir", "temp", temp_age)
+        add_target(targets, seen, "system var tmp", Path("/private/var/tmp"), "temp_dir", "temp", temp_age)
+        add_target(targets, seen, "Library caches", Path("/Library/Caches"), "purge_dir", "app-cache")
+        add_target(targets, seen, "diagnostic reports", Path("/Library/Logs/DiagnosticReports"), "purge_dir", "crash")
+
+    if include_trash:
+        for volume in volumes:
+            if str(volume) == "/":
+                continue
+            add_target(targets, seen, f"{volume.name} trashes", volume / ".Trashes", "purge_dir", "trash")
+
+    return targets, volumes
+
+
+def build_linux_targets(scope, profile, include_trash, include_package_caches):
+    targets = []
+    seen = set()
+    homes = iter_user_homes("linux", scope)
+    volumes = iter_linux_volumes()
+    temp_age = PROFILE_TEMP_AGES[profile]
+
+    for home in homes:
+        config = home / ".config"
+        add_target(targets, seen, f"{home.name} caches", home / ".cache", "purge_dir", "app-cache")
+        add_target(targets, seen, f"{home.name} thumbnails", home / ".thumbnails", "purge_dir", "thumbnails")
+        for browser_name, user_data_root in {
+            "Chrome": config / "google-chrome",
+            "Chrome Beta": config / "google-chrome-beta",
+            "Chromium": config / "chromium",
+            "Edge": config / "microsoft-edge",
+            "Brave": config / "BraveSoftware" / "Brave-Browser",
+            "Vivaldi": config / "vivaldi",
+            "Opera": config / "opera",
+        }.items():
+            if user_data_root.exists():
+                add_chromium_user_data_targets(targets, seen, f"{home.name} {browser_name}", user_data_root)
+        for app_root in (
+            config / "Code",
+            config / "Code - Insiders",
+            config / "Cursor",
+            config / "discord",
+            config / "obsidian",
+            config / "Postman",
+            config / "Slack",
+            config / "Trae",
+        ):
+            add_electron_app_targets(targets, seen, f"{home.name} {app_root.name}", app_root)
+        if include_trash:
+            add_target(targets, seen, f"{home.name} trash", home / ".local" / "share" / "Trash" / "files", "purge_dir", "trash")
+        if include_package_caches:
+            for package_cache in (
+                home / ".pnpm-store",
+                home / ".cargo" / "registry" / "cache",
+                home / ".cargo" / "git" / "db",
+            ):
+                add_target(targets, seen, f"{home.name} {package_cache.name}", package_cache, "purge_dir", "package-cache")
+
+    if scope == "machine":
+        add_target(targets, seen, "tmp", Path("/tmp"), "temp_dir", "temp", temp_age)
+        add_target(targets, seen, "var tmp", Path("/var/tmp"), "temp_dir", "temp", temp_age)
+        add_target(targets, seen, "var crash", Path("/var/crash"), "purge_dir", "crash")
+        if include_package_caches:
+            for package_cache in (
+                Path("/var/cache/apt/archives"),
+                Path("/var/cache/dnf"),
+                Path("/var/cache/yum"),
+                Path("/var/cache/pacman/pkg"),
+                Path("/var/cache/apk"),
+                Path("/var/lib/systemd/coredump"),
+            ):
+                add_target(targets, seen, package_cache.name, package_cache, "purge_dir", "package-cache")
+
+    if include_trash:
+        for volume in volumes:
+            for candidate in (volume / ".Trash",):
+                add_target(targets, seen, f"{volume} trash", candidate, "purge_dir", "trash")
+            if volume.exists():
+                try:
+                    for child in volume.iterdir():
+                        if child.name.startswith(".Trash-") and child.is_dir():
+                            add_target(targets, seen, f"{volume} {child.name}", child, "purge_dir", "trash")
+                except OSError:
+                    continue
+
+    return targets, volumes
+
+
+def build_targets(os_name, scope, profile, include_trash, include_package_caches):
+    if os_name == "windows":
+        return build_windows_targets(scope, profile, include_trash, include_package_caches)
+    if os_name == "darwin":
+        return build_macos_targets(scope, profile, include_trash, include_package_caches)
+    return build_linux_targets(scope, profile, include_trash, include_package_caches)
+
+
+def summarize_target(target):
+    errors = []
+    if target.kind == "purge_dir":
+        total_size, total_items = summarize_purge_dir(target.path, errors)
+    elif target.kind == "temp_dir":
+        total_size, total_items = summarize_temp_dir(target.path, target.min_age_hours, errors)
+    elif target.kind == "match_files":
+        total_size, total_items = summarize_match_files(target.path, target.patterns, target.min_age_hours, errors)
+    elif target.kind == "single_file":
+        total_size, total_items = summarize_single_file(target.path, errors)
+    else:
+        total_size, total_items = 0, 0
+    return {
+        "label": target.label,
+        "path": str(target.path),
+        "category": target.category,
+        "bytes": total_size,
+        "items": total_items,
+        "skipped": 0,
+        "errors": errors,
+    }
+
+
+def clean_target(target):
+    errors = []
+    if target.kind == "purge_dir":
+        total_size, total_items, skipped = clean_purge_dir(target.path, errors)
+    elif target.kind == "temp_dir":
+        total_size, total_items, skipped = clean_temp_dir(target.path, target.min_age_hours, errors)
+    elif target.kind == "match_files":
+        total_size, total_items, skipped = clean_match_files(target.path, target.patterns, target.min_age_hours, errors)
+    elif target.kind == "single_file":
+        total_size, total_items, skipped = clean_single_file(target.path, errors)
+    else:
+        total_size, total_items, skipped = 0, 0, 0
+    return {
+        "label": target.label,
+        "path": str(target.path),
+        "category": target.category,
+        "bytes": total_size,
+        "items": total_items,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
+def compile_report(entries, volumes, os_name, scope, profile, include_trash, include_package_caches):
+    category_totals = {}
+    total_bytes = 0
+    total_items = 0
+    skipped = 0
+    errors = []
+    for entry in entries:
+        total_bytes += entry["bytes"]
+        total_items += entry["items"]
+        skipped += entry["skipped"]
+        if entry["bytes"] > 0:
+            category_totals.setdefault(entry["category"], 0)
+            category_totals[entry["category"]] += entry["bytes"]
+        for message in entry["errors"]:
+            append_error(errors, message, limit=40)
+
+    sorted_targets = sorted(
+        [entry for entry in entries if entry["bytes"] > 0],
+        key=lambda item: item["bytes"],
+        reverse=True,
+    )
+    sorted_categories = sorted(category_totals.items(), key=lambda item: item[1], reverse=True)
+
+    return {
+        "os": os_name,
+        "scope": scope,
+        "profile": profile,
+        "include_trash": include_trash,
+        "include_package_caches": include_package_caches,
+        "volumes": [str(volume) for volume in volumes],
+        "total_bytes": total_bytes,
+        "total_items": total_items,
+        "skipped": skipped,
+        "category_totals": [
+            {
+                "category": category,
+                "title": CATEGORY_TITLES.get(category, category),
+                "bytes": size,
+            }
+            for category, size in sorted_categories
+        ],
+        "largest_targets": sorted_targets[:10],
+        "error_count": len(errors),
+        "errors": errors,
+    }
+
+
+def print_human_report(title, report):
+    print(title)
+    print(f"Platform: {report['os']}")
+    print(f"Scope: {report['scope']}")
+    print(f"Profile: {report['profile']}")
+    print(f"Mounted local volumes: {', '.join(report['volumes']) or 'none detected'}")
+    print(f"Reclaimable space: {format_bytes(report['total_bytes'])}")
+    print(f"Eligible files: {report['total_items']}")
+    if report["skipped"]:
+        print(f"Skipped due to locks or permissions: {report['skipped']}")
+    print("")
+    if report["category_totals"]:
+        print("By category:")
+        for item in report["category_totals"]:
+            print(f"  - {item['title']}: {format_bytes(item['bytes'])}")
+    else:
+        print("By category:")
+        print("  - nothing matched the current rules")
+    print("")
+    if report["largest_targets"]:
+        print("Largest targets:")
+        for item in report["largest_targets"][:5]:
+            print(f"  - {item['label']}: {format_bytes(item['bytes'])} ({item['path']})")
+    if report["errors"]:
+        print("")
+        print("Sample errors:")
+        for message in report["errors"][:5]:
+            print(f"  - {message}")
+
+
+def add_bool_flag(parser, name, help_text):
+    parser.add_argument(
+        f"--{name}",
+        dest=name.replace("-", "_"),
+        action="store_true",
+        default=None,
+        help=help_text,
+    )
+    parser.add_argument(
+        f"--no-{name}",
+        dest=name.replace("-", "_"),
+        action="store_false",
+    )
+
+
+def prompt_choice(label, choices, default):
+    prompt = f"{label} [{'/'.join(choices)}] (default: {default}): "
+    while True:
+        answer = input(prompt).strip().lower()
+        if not answer:
+            return default
+        if answer in choices:
+            return answer
+        print(f"Please choose one of: {', '.join(choices)}")
+
+
+def prompt_yes_no(label, default):
+    suffix = "Y/n" if default else "y/N"
+    answer = input(f"{label} [{suffix}]: ").strip().lower()
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
+
+
+def resolve_interactive_args(args):
+    if args.scope is None:
+        args.scope = prompt_choice("Cleanup scope", ("user", "machine"), "machine")
+    if args.profile is None:
+        args.profile = prompt_choice("Cleanup profile", ("conservative", "standard", "aggressive"), "standard")
+    if args.include_trash is None:
+        args.include_trash = prompt_yes_no("Empty recycle bin or trash too", True)
+    if args.include_package_caches is None:
+        default_packages = args.profile == "aggressive"
+        args.include_package_caches = prompt_yes_no(
+            "Include package-manager and developer caches",
+            default_packages,
+        )
+    return args
+
+
+def resolve_defaults(args):
+    if args.scope is None:
+        args.scope = "machine"
+    if args.profile is None:
+        args.profile = "standard"
+    if args.include_trash is None:
+        args.include_trash = True
+    if args.include_package_caches is None:
+        args.include_package_caches = args.profile == "aggressive"
+    return args
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description="Safely scan and clean rebuildable junk files across local drives.",
+    )
+    parser.add_argument(
+        "action",
+        nargs="?",
+        choices=("scan", "clean"),
+        default="scan",
+        help="scan only or clean after scanning",
+    )
+    parser.add_argument("--scope", choices=("user", "machine"))
+    parser.add_argument("--profile", choices=("conservative", "standard", "aggressive"))
+    add_bool_flag(parser, "include-trash", "include recycle bin or trash contents")
+    add_bool_flag(parser, "include-package-caches", "include rebuildable package-manager and developer caches")
+    parser.add_argument("--execute", action="store_true", help="required for non-interactive cleanup")
+    parser.add_argument("--interactive", action="store_true", help="ask for scope, profile, and confirmation")
+    parser.add_argument("--json", action="store_true", help="emit JSON instead of human-readable text")
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    os_name = detect_os()
+
+    if args.interactive:
+        args = resolve_interactive_args(args)
+    else:
+        args = resolve_defaults(args)
+
+    if args.action == "clean" and not args.execute and not args.interactive:
+        parser.error("clean requires --execute unless --interactive is used")
+
+    targets, volumes = build_targets(
+        os_name,
+        args.scope,
+        args.profile,
+        args.include_trash,
+        args.include_package_caches,
+    )
+
+    scan_entries = [summarize_target(target) for target in targets]
+    scan_report = compile_report(
+        scan_entries,
+        volumes,
+        os_name,
+        args.scope,
+        args.profile,
+        args.include_trash,
+        args.include_package_caches,
+    )
+
+    if args.json and args.action != "clean":
+        print(json.dumps({"scan": scan_report}, indent=2))
+    elif not args.json:
+        print_human_report("Scan Report", scan_report)
+
+    should_clean = args.action == "clean"
+    if args.interactive and not should_clean:
+        should_clean = prompt_yes_no("Run cleanup now", scan_report["total_bytes"] > 0)
+    elif args.interactive and should_clean:
+        should_clean = prompt_yes_no("Proceed with cleanup now", True)
+
+    if not should_clean:
+        return 0
+
+    clean_entries = [clean_target(target) for target in targets]
+    clean_report = compile_report(
+        clean_entries,
+        volumes,
+        os_name,
+        args.scope,
+        args.profile,
+        args.include_trash,
+        args.include_package_caches,
+    )
+
+    if args.json:
+        print(json.dumps({"scan": scan_report, "clean": clean_report}, indent=2))
+    else:
+        print("")
+        print_human_report("Cleanup Report", clean_report)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

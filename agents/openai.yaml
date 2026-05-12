@@ -1,0 +1,4 @@
+interface:
+  display_name: "Safe Junk Cleaner"
+  short_description: "Safely clean temp files and caches across drives"
+  default_prompt: "Use $safe-junk-cleaner to safely scan and clean junk files across mounted drives."
