@@ -11,6 +11,19 @@ This repository can be used from several mainstream AI agents.
 | Gemini CLI | Custom command | `~/.gemini/commands/safe-junk-cleaner.toml` |
 | OpenCode | Custom command | `.opencode/commands/safe-junk-cleaner.md` |
 
+## Feature Snapshot
+
+Before installing it anywhere, here is what this skill actually does:
+
+- safe, whitelist-based cleanup of temp files, caches, crash data, logs, thumbnails, updater leftovers, and optional trash contents
+- `level 1` as the default cleanup path
+- `level 2` for deeper WeChat or QQ cache cleanup plus a global two-year stale-file review
+- specialty cleanup panels for `common`, `system-drive`, `wechat`, `qq`, `residual`, and `developer`
+- advisory-only large-file review and duplicate-file review
+- JSON output and interactive mode for agent-driven or terminal-driven workflows
+
+Use a Python 3 interpreter when running the script directly. On some Windows systems, `python` may still point to Python 2.
+
 ## 1. Codex
 
 Codex uses filesystem skills discovered under `$CODEX_HOME/skills` or `~/.codex/skills`.
@@ -205,13 +218,38 @@ python3 scripts/safe_junk_cleaner.py --interactive
 Dry scan:
 
 ```bash
-python3 scripts/safe_junk_cleaner.py scan --scope machine --profile standard --include-trash --json
+python3 scripts/safe_junk_cleaner.py scan --scope machine --profile standard --level 1 --include-trash --json
 ```
 
 Cleanup:
 
 ```bash
-python3 scripts/safe_junk_cleaner.py clean --scope machine --profile standard --include-trash --execute --json
+python3 scripts/safe_junk_cleaner.py clean --scope machine --profile standard --level 1 --include-trash --execute --json
+```
+
+Show specialty panel totals:
+
+```bash
+python3 scripts/safe_junk_cleaner.py scan --scope machine --profile aggressive --level 2 --panel-summary
+```
+
+Run a focused WeChat or QQ cleanup:
+
+```bash
+python3 scripts/safe_junk_cleaner.py scan --scope machine --profile aggressive --level 2 --specialty wechat --panel-summary
+python3 scripts/safe_junk_cleaner.py clean --scope machine --profile aggressive --level 2 --specialty qq --execute --json
+```
+
+Review large files without deleting anything:
+
+```bash
+python3 scripts/safe_junk_cleaner.py --large-files --min-file-size-mb 512 --top 20
+```
+
+Review duplicate files without deleting anything:
+
+```bash
+python3 scripts/safe_junk_cleaner.py --duplicate-files --min-file-size-mb 128 --top 20
 ```
 
 ## Verification
@@ -225,12 +263,20 @@ python3 scripts/safe_junk_cleaner.py --list-supported-software
 Run a safe dry scan:
 
 ```bash
-python3 scripts/safe_junk_cleaner.py scan --scope user --profile standard --include-trash
+python3 scripts/safe_junk_cleaner.py scan --scope user --profile standard --level 1 --include-trash
+```
+
+Show current specialty panel totals:
+
+```bash
+python3 scripts/safe_junk_cleaner.py scan --scope user --profile standard --level 1 --panel-summary
 ```
 
 ## Notes
 
 - `standard` is the recommended default.
 - `aggressive` also removes rebuildable package-manager and developer caches.
+- `level 2` is stronger than `level 1` and should be explained before use.
+- large-file review and duplicate-file review are report-only modes.
 - Some system directories require administrator or root rights.
 - Some files may be skipped if they are locked by running applications.
